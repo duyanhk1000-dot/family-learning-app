@@ -1,0 +1,1381 @@
+import streamlit as st
+import sqlite3
+import json
+import os
+import datetime
+import pypdf
+import tempfile
+import time
+import hashlib
+from typing import List, Optional, Literal
+from pydantic import BaseModel, Field
+from google import genai
+from google.genai import types
+
+# Cấu hình trang Streamlit
+st.set_page_config(
+    page_title="Hệ thống Học tập Gia đình",
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+DB_FILE = 'he_thong_hoc_tap.db'
+
+# --- ĐỊNH NGHĨA CẤU TRÚC DỮ LIỆU PYDANTIC CHO AI ---
+
+class Question(BaseModel):
+    question_number: int = Field(..., description="Số thứ tự câu hỏi từ 1 đến 15")
+    question_type: Literal["multiple_choice", "essay"] = Field(..., description="Loại câu hỏi: 'multiple_choice' (trắc nghiệm) hoặc 'essay' (tự luận)")
+    prompt: str = Field(..., description="Nội dung câu hỏi. Sử dụng LaTeX $...$ hoặc $$...$$ cho các công thức Toán/Lý/Hóa nếu có.")
+    options: Optional[List[str]] = Field(None, description="Danh sách 4 lựa chọn cho trắc nghiệm (ví dụ: ['A. ...', 'B. ...', 'C. ...', 'D. ...']). Để None cho tự luận.")
+    correct_answer: str = Field(..., description="Đáp án đúng. Trắc nghiệm: Ghi rõ chữ cái 'A', 'B', 'C', hoặc 'D'. Tự luận: Lời giải mẫu chi tiết.")
+
+class LessonPayload(BaseModel):
+    title: str = Field(..., description="Tiêu đề buổi học")
+    lecture_content: str = Field(..., description="Nội dung bài giảng chi tiết, dễ hiểu, theo đúng cấu trúc 5 phần, sử dụng Markdown và LaTeX cho công thức toán học.")
+    duration_minutes: int = Field(..., description="Thời gian làm bài thi (phút), từ 30 đến 60 phút.")
+    questions: List[Question] = Field(..., description="Danh sách ĐÚNG 15 câu hỏi kiểm tra (10 câu trắc nghiệm, 5 câu tự luận).")
+
+class QuestionFeedback(BaseModel):
+    question_number: int = Field(..., description="Số thứ tự câu hỏi từ 1 đến 15")
+    student_answer: str = Field(..., description="Câu trả lời của học sinh")
+    is_correct: bool = Field(..., description="Đúng (True) hoặc Sai (False)")
+    score_awarded: float = Field(..., description="Điểm số đạt được cho câu này (ví dụ: trắc nghiệm đúng được 1 điểm, tự luận đúng hoàn toàn được 1 điểm hoặc thang điểm thành phần)")
+    correct_explanation: str = Field(..., description="Giải thích chi tiết lời giải đúng, phân tích lỗi sai và cách khắc phục cho học sinh.")
+
+class GradePayload(BaseModel):
+    total_score: float = Field(..., description="Tổng điểm quy đổi của học sinh trên thang điểm 10. Chấm điểm chính xác và nghiêm khắc.")
+    overall_feedback: str = Field(..., description="Nhận xét chung về bài làm, ưu điểm, nhược điểm và lời khuyên ôn tập.")
+    detailed_feedback: List[QuestionFeedback] = Field(..., description="Chi tiết chấm điểm cho từng câu trong số 15 câu hỏi.")
+
+
+# --- CÁC HÀM TRUY VẤN CƠ SỞ DỮ LIỆU ---
+
+def get_db():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn
+
+def verify_user(username, password):
+    try:
+        with get_db() as conn:
+            user = conn.execute(
+                "SELECT username, role FROM Users WHERE username = ? AND password = ?",
+                (username, password)
+            ).fetchone()
+            if user:
+                return dict(user)
+    except Exception as e:
+        st.error(f"Lỗi truy vấn người dùng: {e}")
+    return None
+
+def get_subjects():
+    try:
+        with get_db() as conn:
+            rows = conn.execute("SELECT DISTINCT subject FROM Syllabus").fetchall()
+            return [r['subject'] for r in rows]
+    except Exception as e:
+        st.error(f"Lỗi lấy danh sách môn học: {e}")
+    return []
+
+def get_syllabus(subject):
+    try:
+        with get_db() as conn:
+            row = conn.execute("SELECT content FROM Syllabus WHERE subject = ?", (subject,)).fetchone()
+            if row:
+                return row['content']
+    except Exception as e:
+        st.error(f"Lỗi lấy lộ trình học: {e}")
+    return None
+
+def get_syllabus_with_textbook(subject):
+    try:
+        with get_db() as conn:
+            row = conn.execute("SELECT content, textbook_content, pdf_file_path, total_lessons FROM Syllabus WHERE subject = ?", (subject,)).fetchone()
+            if row:
+                return dict(row)
+    except Exception as e:
+        st.error(f"Lỗi lấy lộ trình và sách giáo khoa: {e}")
+    return None
+
+def save_syllabus(subject, content, textbook_content, pdf_file_path, total_lessons):
+    try:
+        with get_db() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO Syllabus (subject, content, textbook_content, pdf_file_path, total_lessons) 
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (subject, content, textbook_content, pdf_file_path, total_lessons)
+            )
+            conn.commit()
+            return True
+    except Exception as e:
+        st.error(f"Lỗi lưu lộ trình học: {e}")
+    return False
+
+def get_lessons_for_subject(subject):
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT id, lesson_number, title, duration FROM Lessons WHERE subject = ? ORDER BY lesson_number ASC",
+                (subject,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        st.error(f"Lỗi lấy danh sách bài học: {e}")
+    return []
+
+def get_lesson_detail(subject, lesson_number):
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT id, lesson_number, title, lecture_content, questions, duration FROM Lessons WHERE subject = ? AND lesson_number = ?",
+                (subject, lesson_number)
+            ).fetchone()
+            if row:
+                return dict(row)
+    except Exception as e:
+        st.error(f"Lỗi lấy thông tin bài học chi tiết: {e}")
+    return None
+
+def save_lesson(subject, lesson_number, title, lecture_content, questions_json, duration):
+    try:
+        with get_db() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO Lessons (subject, lesson_number, title, lecture_content, questions, duration)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (subject, lesson_number, title, lecture_content, questions_json, duration)
+            )
+            conn.commit()
+            return True
+    except Exception as e:
+        st.error(f"Lỗi lưu bài giảng & đề thi: {e}")
+    return False
+
+def get_grades_for_parent():
+    try:
+        with get_db() as conn:
+            rows = conn.execute(
+                """
+                SELECT g.id, g.student_username, g.score, g.submitted_at, g.answers, g.ai_feedback,
+                       l.subject, l.lesson_number, l.title as lesson_title, l.questions as original_questions
+                FROM Grades g
+                JOIN Lessons l ON g.lesson_id = l.id
+                ORDER BY g.submitted_at DESC
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        st.error(f"Lỗi truy vấn bảng điểm phụ huynh: {e}")
+    return []
+
+def get_grade_for_student(student_username, lesson_id):
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT id, score, answers, ai_feedback, submitted_at FROM Grades WHERE student_username = ? AND lesson_id = ? ORDER BY submitted_at DESC LIMIT 1",
+                (student_username, lesson_id)
+            ).fetchone()
+            if row:
+                return dict(row)
+    except Exception as e:
+        st.error(f"Lỗi lấy điểm số học sinh: {e}")
+    return None
+
+def save_grade(student_username, lesson_id, answers_json, score, ai_feedback_json):
+    try:
+        with get_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO Grades (student_username, lesson_id, answers, score, ai_feedback)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (student_username, lesson_id, answers_json, score, ai_feedback_json)
+            )
+            conn.commit()
+            return True
+    except Exception as e:
+        st.error(f"Lỗi lưu kết quả bài làm: {e}")
+    return False
+
+
+# --- TRÍCH XUẤT VĂN BẢN TỪ FILE PDF ---
+
+def extract_text_from_pdf(uploaded_file):
+    try:
+        reader = pypdf.PdfReader(uploaded_file)
+        text = ""
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        return text
+    except Exception as e:
+        st.error(f"Lỗi trích xuất văn bản từ tệp PDF: {e}")
+        return ""
+
+
+# --- LƯU TRỮ FILE PDF CỤC BỘ ---
+
+def save_pdf_bytes(pdf_bytes, subject):
+    try:
+        os.makedirs("data/textbooks", exist_ok=True)
+        # Sử dụng MD5 hash của subject làm tên file để tránh lỗi mã hóa Unicode tiếng Việt với thư viện HTTPX/Requests
+        hash_name = hashlib.md5(subject.encode('utf-8')).hexdigest()
+        file_path = f"data/textbooks/{hash_name}.pdf"
+        with open(file_path, "wb") as f:
+            f.write(pdf_bytes)
+        return file_path
+    except Exception as e:
+        st.error(f"Lỗi khi lưu tệp PDF cục bộ: {e}")
+        return ""
+
+
+# --- THIẾT LẬP GIAO DIỆN & TỔNG QUAN ---
+
+def inject_custom_css():
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        /* Thay đổi màu nền toàn trang sang tươi sáng */
+        html, body, [data-testid="stAppViewContainer"] {
+            font-family: 'Inter', sans-serif !important;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%) !important;
+            color: #1e293b !important;
+        }
+        
+        /* Thanh sidebar sáng màu và chuyên nghiệp */
+        [data-testid="stSidebar"] {
+            background-color: #ffffff !important;
+            border-right: 1px solid #e2e8f0 !important;
+        }
+        
+        /* Font chữ và tiêu đề tối slate */
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Inter', sans-serif !important;
+            font-weight: 700 !important;
+            color: #0f172a !important;
+        }
+        
+        /* ÉP BUỘC MÀU CHỮ TỐI (DARK SLATE) CHO TẤT CẢ VĂN BẢN ĐỂ DỄ ĐỌC TRÊN NỀN SÁNG */
+        div[data-testid="stMarkdownContainer"] p,
+        div[data-testid="stMarkdownContainer"] span,
+        div[data-testid="stMarkdownContainer"] li,
+        div[data-testid="stMarkdownContainer"] h1,
+        div[data-testid="stMarkdownContainer"] h2,
+        div[data-testid="stMarkdownContainer"] h3,
+        div[data-testid="stMarkdownContainer"] h4,
+        div[data-testid="stMarkdownContainer"] h5,
+        div[data-testid="stMarkdownContainer"] h6,
+        div[data-testid="stMarkdownContainer"] ol,
+        div[data-testid="stMarkdownContainer"] ul,
+        div[data-testid="stMarkdownContainer"] code,
+        div[data-testid="stMarkdownContainer"] label,
+        .stMarkdown p,
+        .stMarkdown span,
+        .stMarkdown li,
+        .stMarkdown div,
+        .stMarkdown h1,
+        .stMarkdown h2,
+        .stMarkdown h3,
+        .stMarkdown h4,
+        .stMarkdown h5,
+        .stMarkdown h6,
+        label,
+        .stWidgetFormLabel {
+            color: #1e293b !important;
+        }
+
+        /* Đảm bảo các công thức Toán học KaTeX hiển thị màu tối */
+        .katex, .katex-html, .katex * {
+            color: #1e293b !important;
+        }
+        
+        /* Chữ gradient sư phạm cho Phụ huynh (tím-indigo) */
+        .parent-gradient-text {
+            background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%) !important;
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+            font-weight: 800;
+        }
+
+        /* Chữ gradient sư phạm cho Học sinh (xanh dương) */
+        .student-gradient-text {
+            background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+            font-weight: 800;
+        }
+        
+        /* Card trắng trang nhã, đổ bóng nhẹ */
+        .custom-card {
+            background: #ffffff !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 12px !important;
+            padding: 24px !important;
+            margin-bottom: 20px !important;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05) !important;
+            color: #1e293b !important;
+        }
+        
+        /* Huy hiệu bắt mắt */
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .badge-parent {
+            background-color: rgba(124, 58, 237, 0.1) !important;
+            color: #7c3aed !important;
+            border: 1px solid rgba(124, 58, 237, 0.2) !important;
+        }
+        
+        .badge-student {
+            background-color: rgba(2, 132, 199, 0.1) !important;
+            color: #0284c7 !important;
+            border: 1px solid rgba(2, 132, 199, 0.2) !important;
+        }
+        
+        .score-display {
+            font-size: 3rem;
+            font-weight: 800;
+            text-align: center;
+            margin: 15px 0;
+        }
+        
+        .score-good {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+        }
+        
+        .score-average {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+        }
+        
+        .score-poor {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+        }
+        
+        /* Sửa lại nền Form */
+        div[data-testid="stForm"] {
+            background-color: #ffffff !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 12px !important;
+            padding: 24px !important;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+        }
+        
+        .stButton>button {
+            border-radius: 8px !important;
+            font-weight: 600 !important;
+            transition: all 0.2s ease !important;
+        }
+        
+        /* Làm nổi bật các tab trong Streamlit */
+        div[data-baseweb="tab-list"] {
+            background-color: #f1f5f9 !important;
+            border-radius: 8px !important;
+            padding: 4px !important;
+        }
+        
+        button[data-baseweb="tab"] {
+            border-radius: 6px !important;
+            color: #475569 !important;
+        }
+        
+        button[data-baseweb="tab"][aria-selected="true"] {
+            background-color: #ffffff !important;
+            color: #0f172a !important;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1) !important;
+        }
+        
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+def get_gemini_client():
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        api_key = st.session_state.get("gemini_api_key", "")
+        
+    if not api_key:
+        st.sidebar.warning("⚠️ Không tìm thấy API Key của Gemini!")
+        entered_key = st.sidebar.text_input("Nhập Gemini API Key của bạn:", type="password")
+        if entered_key:
+            st.session_state["gemini_api_key"] = entered_key
+            api_key = entered_key
+            st.rerun()
+            
+    if api_key:
+        try:
+            return genai.Client(api_key=api_key)
+        except Exception as e:
+            st.sidebar.error(f"Lỗi khởi tạo Gemini Client: {e}")
+    return None
+
+def generate_content_with_retry(client, model, contents, config=None, max_retries=5, initial_delay=3):
+    delay = initial_delay
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            if config is not None:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config
+                )
+            else:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=contents
+                )
+            return response
+        except Exception as e:
+            last_error = e
+            err_msg = str(e).upper()
+            if any(x in err_msg for x in ["503", "429", "UNAVAILABLE", "HIGH DEMAND", "BUSY", "LIMIT", "TEMPORARY"]):
+                st.toast(f"⏳ Máy chủ Gemini bận (Lần thử {attempt + 1}/{max_retries}). Thử lại sau {delay}s...", icon="⚠️")
+                time.sleep(delay)
+                delay *= 2
+            else:
+                raise e
+    raise last_error
+
+
+# --- GIAO DIỆN PHỤ HUYNH ---
+
+def show_parent_interface(client):
+    st.markdown("<h1>Không Gian <span class='parent-gradient-text'>Phụ Huynh</span> <span class='badge badge-parent'>Parent Portal</span></h1>", unsafe_allow_html=True)
+    
+    tab1, tab2, tab3 = st.tabs(["🗺️ Lộ Trình Học Tập", "📝 Soạn Giáo Án & Đề Thi", "📊 Giám Sát Kết Quả"])
+    
+    # TAB 1: QUẢN LÝ LỘ TRÌNH VÀ TẢI PDF
+    with tab1:
+        st.subheader("Quản lý Chương trình học & Tạo Lộ trình từ PDF")
+        
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.write("### Nhập thông tin môn học")
+            existing_subjects = get_subjects()
+            
+            subject_mode = st.radio("Chọn hình thức môn học:", ["Chọn môn học đã có", "Thêm môn học mới"])
+            
+            if subject_mode == "Chọn môn học đã có" and existing_subjects:
+                selected_subject = st.selectbox("Môn học có sẵn:", existing_subjects)
+            else:
+                selected_subject = st.text_input("Tên môn học mới:", placeholder="Ví dụ: Toán lớp 6, Tiếng Anh lớp 6...")
+            
+            uploaded_pdf = st.file_uploader("Tải tệp sách giáo khoa lên (PDF):", type=["pdf"])
+            
+            btn_create_syllabus = st.button("AI Tạo Lộ Trình Học 🚀", use_container_width=True)
+            
+        with col2:
+            st.write("### Lộ trình học chi tiết")
+            
+            # Khởi tạo trạng thái duyệt
+            if 'show_approval' not in st.session_state:
+                st.session_state['show_approval'] = False
+                
+            if btn_create_syllabus:
+                if not selected_subject:
+                    st.error("Vui lòng điền hoặc chọn môn học!")
+                elif not uploaded_pdf:
+                    st.error("Vui lòng tải lên file sách giáo khoa PDF!")
+                else:
+                    # Lưu tạm bytes của PDF để ghi file khi phụ huynh phê duyệt
+                    pdf_bytes = uploaded_pdf.getvalue()
+                    st.session_state['temp_pdf_bytes'] = pdf_bytes
+                    st.session_state['temp_syllabus_subject'] = selected_subject
+                    
+                    # Tạo file tạm cục bộ để upload lên Gemini File API
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                        temp_file.write(pdf_bytes)
+                        temp_file_path = temp_file.name
+                        
+                    with st.spinner("AI đang quét file PDF sách giáo khoa bằng công nghệ nhận diện hình ảnh/chữ viết... Vui lòng đợi trong giây lát."):
+                        try:
+                            # Tải tệp lên Gemini File API
+                            file_ref = client.files.upload(file=temp_file_path)
+                            
+                            # Chờ tệp xử lý xong
+                            while file_ref.state.name == "PROCESSING":
+                                time.sleep(1)
+                                file_ref = client.files.get(name=file_ref.name)
+                                
+                            if file_ref.state.name == "FAILED":
+                                st.error("Gemini không thể xử lý tệp PDF này!")
+                                os.unlink(temp_file_path)
+                            else:
+                                # Tạo prompt yêu cầu AI tạo lộ trình
+                                prompt = f"""
+                                Bạn là một chuyên gia thiết kế chương trình học. Hãy phân tích tài liệu sách giáo khoa PDF được đính kèm dưới đây và xây dựng một lộ trình học tập khoa học, logic chia theo từng buổi học (Buổi 1, Buổi 2...). 
+                                
+                                Môn học: {selected_subject}
+
+                                Hãy phân tích và viết lộ trình tổng thể chi tiết. Mỗi buổi học phải nêu rõ:
+                                1. Tên buổi (Ví dụ: Buổi 1: Tập hợp và các phần tử của tập hợp)
+                                2. Mục tiêu kiến thức cần đạt
+                                3. Các khái niệm cốt lõi (sử dụng định dạng LaTeX như $...$ hoặc $$...$$ cho các công thức nếu cần thiết)
+                                
+                                Trình bày dưới dạng Markdown đẹp mắt, khoa học, dễ đọc để làm căn cứ cho việc soạn bài giảng sau này.
+                                """
+                                response = generate_content_with_retry(
+                                    client,
+                                    model='gemini-2.5-flash',
+                                    contents=[file_ref, prompt]
+                                )
+                                syllabus_content = response.text
+                                
+                                # Lưu thông tin tạm thời để chờ phê duyệt
+                                st.session_state['temp_syllabus_content'] = syllabus_content
+                                st.session_state['show_approval'] = True
+                                
+                                # Trích xuất thử văn bản text để làm dự phòng cục bộ
+                                try:
+                                    extracted_text = extract_text_from_pdf(uploaded_pdf)
+                                    st.session_state['temp_textbook_content'] = extracted_text if extracted_text else "PDF Scan"
+                                except Exception:
+                                    st.session_state['temp_textbook_content'] = "PDF Scan"
+                                    
+                                # Xóa file khỏi API của Gemini sau khi xử lý xong
+                                client.files.delete(name=file_ref.name)
+                                os.unlink(temp_file_path)
+                        except Exception as e:
+                            st.error(f"Lỗi khi xử lý file PDF và gọi Gemini: {e}")
+                            if os.path.exists(temp_file_path):
+                                os.unlink(temp_file_path)
+            
+            # Xử lý hiển thị chế độ Phê duyệt
+            if st.session_state['show_approval']:
+                st.warning("⚠️ LỘ TRÌNH ĐANG ĐƯỢC ĐỀ XUẤT. PHỤ HUYNH CẦN PHÊ DUYỆT ĐỂ LƯU VÀO LỊCH HỌC TẬP.")
+                st.markdown(st.session_state['temp_syllabus_content'])
+                
+                st.write("---")
+                # Cho phép phụ huynh tùy chỉnh tổng số buổi học trước khi phê duyệt
+                total_lessons = st.number_input("Chốt tổng số buổi học cho lộ trình này (Ví dụ: 39):", min_value=1, max_value=150, value=30, step=1)
+                
+                col_app1, col_app2 = st.columns(2)
+                with col_app1:
+                    if st.button("Phê duyệt & Lưu Lộ Trình ✅", use_container_width=True):
+                        # Lưu file PDF cục bộ
+                        pdf_path = save_pdf_bytes(
+                            st.session_state['temp_pdf_bytes'],
+                            st.session_state['temp_syllabus_subject']
+                        )
+                        
+                        # Lưu chính thức vào SQLite
+                        success = save_syllabus(
+                            st.session_state['temp_syllabus_subject'],
+                            st.session_state['temp_syllabus_content'],
+                            st.session_state['temp_textbook_content'],
+                            pdf_path,
+                            total_lessons
+                        )
+                        if success:
+                            st.success(f"Đã phê duyệt và lưu lộ trình ({total_lessons} buổi) cho môn '{st.session_state['temp_syllabus_subject']}' thành công!")
+                            # Reset trạng thái
+                            st.session_state['show_approval'] = False
+                            st.session_state['temp_syllabus_content'] = None
+                            st.session_state['temp_pdf_bytes'] = None
+                            st.rerun()
+                with col_app2:
+                    if st.button("Hủy bỏ đề xuất này ❌", use_container_width=True):
+                        st.session_state['show_approval'] = False
+                        st.session_state['temp_syllabus_content'] = None
+                        st.session_state['temp_pdf_bytes'] = None
+                        st.rerun()
+            else:
+                # Hiển thị lộ trình đã lưu trước đó nếu có
+                if selected_subject:
+                    saved_data = get_syllabus_with_textbook(selected_subject)
+                    if saved_data and saved_data['content']:
+                        st.success(f"📅 Lịch học tập đã phê duyệt (Tổng số: {saved_data.get('total_lessons', 30)} buổi):")
+                        st.markdown(saved_data['content'])
+                    else:
+                        st.info("Chưa có lộ trình học được phê duyệt cho môn học này. Hãy sử dụng form bên trái để tải PDF sách giáo khoa và tạo lộ trình học.")
+                else:
+                    st.info("Vui lòng chọn hoặc thêm môn học ở bên trái để xem lộ trình học.")
+
+    # TAB 2: SOẠN BÀI THEO BUỔI (DỰA TRÊN CẢ SÁCH GIÁO KHOA & LỊCH HỌC)
+    with tab2:
+        st.subheader("Soạn Giáo Án Chi Tiết & Đề Thi 15 Câu")
+        
+        existing_subjects = get_subjects()
+        if not existing_subjects:
+            st.warning("Vui lòng tạo lộ trình học trước ở Tab 'Lộ Trình Học Tập' trước khi soạn giáo án.")
+        else:
+            col_left, col_right = st.columns([1, 2])
+            with col_left:
+                selected_sub_lesson = st.selectbox("Chọn môn học để soạn giáo án:", existing_subjects, key="select_sub_lesson")
+                
+                # Lấy dữ liệu lịch học tập & sách giáo khoa
+                syllabus_data = get_syllabus_with_textbook(selected_sub_lesson)
+                syllabus_content = syllabus_data['content'] if syllabus_data else ""
+                textbook_content = syllabus_data['textbook_content'] if syllabus_data else ""
+                pdf_file_path = syllabus_data['pdf_file_path'] if syllabus_data else ""
+                total_lessons = syllabus_data['total_lessons'] if (syllabus_data and syllabus_data['total_lessons']) else 30
+                
+                with st.expander("Xem lịch học tập đã phê duyệt", expanded=False):
+                    st.markdown(syllabus_content)
+                
+                # Dropdown chọn buổi theo danh sách từ 1 đến total_lessons
+                lesson_options = list(range(1, total_lessons + 1))
+                lesson_number = st.selectbox("Chọn buổi cần soạn giáo án:", options=lesson_options)
+                
+                btn_create_lesson = st.button("AI Soạn Giáo Án & Đề Thi ✏️", use_container_width=True)
+                
+            with col_right:
+                st.write("### Giáo án & Đề kiểm tra đã tạo")
+                
+                current_lesson = get_lesson_detail(selected_sub_lesson, lesson_number)
+                
+                if btn_create_lesson:
+                    # Kiểm tra xem có file PDF gốc lưu cục bộ không để đưa vào Gemini File API
+                    use_multimodal = os.path.exists(pdf_file_path) if pdf_file_path else False
+                    
+                    with st.spinner(f"AI đang soạn giáo án & bộ 15 câu hỏi kiểm tra cho Buổi {lesson_number}..."):
+                        try:
+                            prompt = f"""
+                            Bạn là một chuyên gia giáo dục và biên soạn tài liệu học tập. Dựa trên Lịch học tập tổng thể và Nội dung sách giáo khoa được cung cấp, hãy soạn thảo bài giảng chi tiết cùng bộ đề kiểm tra cuối buổi cho Buổi học số {lesson_number}.
+                            
+                            Môn học: {selected_sub_lesson}
+                            
+                            Lịch học tập tổng thể đã phê duyệt:
+                            {syllabus_content}
+
+                            Hãy tham khảo sách giáo khoa PDF đi kèm để viết bài soạn chi tiết.
+
+                            Hãy biên soạn theo các tiêu chí nghiêm ngặt sau:
+
+                            A. Yêu cầu chi tiết về BÀI GIẢNG (lecture_content):
+                            Phải viết đầy đủ nội dung bài giảng chi tiết, dễ hiểu cho học sinh lớp 6, trình bày Markdown đẹp mắt và chia cấu trúc đúng 5 phần sau:
+                            1. Mục tiêu bài học (Learning Objectives):
+                               - Kiến thức: Người học hiểu và nhớ được những gì?
+                               - Kỹ năng: Người học thực hiện được thao tác hoặc giải quyết vấn đề gì?
+                               - Thái độ: Sự thay đổi trong tư duy, nhận thức của người học sau bài học.
+                            2. Cấu trúc bài giảng (Lesson Plan):
+                               - Khởi động: Gây sự chú ý, kết nối kiến thức cũ với kiến thức mới.
+                               - Hình thành kiến thức: Trình bày lý thuyết trọng tâm kết hợp ví dụ minh họa trực quan (Toán học sử dụng công thức LaTeX $...$ hoặc $$...$$).
+                               - Luyện tập: Bài tập thực hành, câu hỏi thảo luận để củng cố kiến thức.
+                               - Vận dụng/Mở rộng: Hướng dẫn cách áp dụng kiến thức vào thực tiễn cuộc sống.
+                               - Tổng kết: Tóm tắt các ý chính và dặn dò.
+                            3. Phương pháp truyền đạt & Tương tác:
+                               - Tính tương tác: Gợi ý các câu hỏi gợi mở, thảo luận hoặc hoạt động nhanh.
+                               - Đa dạng hóa phương tiện: Cách kết hợp slide trình chiếu, giọng nói nhấn nhá, bảng viết.
+                               - Ví dụ thực tế: Tình huống thực tiễn sinh động.
+                            4. Công cụ hỗ trợ:
+                               - Slide trình chiếu: Bản phác thảo slide ngắn gọn, súc tích (quy tắc 6x6: không quá 6 dòng/slide, 6 chữ/dòng), sử dụng hình ảnh minh họa.
+                               - Thiết bị: Máy chiếu, bảng viết, micro hoặc thiết bị trực tuyến.
+                            5. Đánh giá và Phản hồi:
+                               - Đánh giá quá trình: Đưa ra câu hỏi nhanh trong bài.
+                               - Đánh giá tổng kết: Nhắc nhở con làm bài kiểm tra cuối giờ.
+                               - Phản hồi: Cách lắng nghe ý kiến đóng góp của con.
+
+                            B. Yêu cầu chi tiết về ĐỀ KIỂM TRA (questions):
+                            Thiết kế bộ đề kiểm tra cuối buổi gồm ĐÚNG 15 câu hỏi bám sát nội dung sách giáo khoa:
+                            - 10 câu đầu: Trắc nghiệm (multiple_choice, có 4 đáp án A, B, C, D)
+                            - 5 câu tiếp theo: Tự luận ngắn (essay)
+                            Hãy điền đầy đủ đáp án chuẩn hoặc hướng dẫn chấm vào từng câu.
+
+                            C. Đề xuất thời gian làm bài (duration_minutes) hợp lý từ 30 đến 60 phút.
+                            """
+                            
+                            # Tải file PDF hoặc sử dụng text fallback để gửi cho Gemini
+                            if use_multimodal:
+                                temp_upload_path = ""
+                                try:
+                                    # Tạo bản sao file tạm thời với tên hoàn toàn ASCII để upload an toàn
+                                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                                        with open(pdf_file_path, "rb") as original_file:
+                                            temp_file.write(original_file.read())
+                                        temp_upload_path = temp_file.name
+                                    
+                                    file_ref = client.files.upload(file=temp_upload_path)
+                                    # Xóa tệp tạm sau khi upload thành công
+                                    os.unlink(temp_upload_path)
+                                    temp_upload_path = ""
+                                    
+                                    while file_ref.state.name == "PROCESSING":
+                                        time.sleep(1)
+                                        file_ref = client.files.get(name=file_ref.name)
+                                        
+                                    if file_ref.state.name == "FAILED":
+                                        st.warning("Không thể xử lý định dạng PDF, hệ thống tự động chuyển sang chế độ văn bản.")
+                                        prompt_with_fallback = prompt + f"\n\nNội dung text sách giáo khoa:\n{textbook_content[:60000]}"
+                                        response = generate_content_with_retry(
+                                            client,
+                                            model='gemini-2.5-flash',
+                                            contents=prompt_with_fallback,
+                                            config=types.GenerateContentConfig(
+                                                response_mime_type="application/json",
+                                                response_schema=LessonPayload,
+                                                temperature=0.3,
+                                            )
+                                        )
+                                    else:
+                                        # Gọi Gemini multimodal
+                                        response = generate_content_with_retry(
+                                            client,
+                                            model='gemini-2.5-flash',
+                                            contents=[file_ref, prompt],
+                                            config=types.GenerateContentConfig(
+                                                response_mime_type="application/json",
+                                                response_schema=LessonPayload,
+                                                temperature=0.3,
+                                            )
+                                        )
+                                        client.files.delete(name=file_ref.name)
+                                except Exception as upload_err:
+                                    if temp_upload_path and os.path.exists(temp_upload_path):
+                                        os.unlink(temp_upload_path)
+                                    st.warning(f"Lỗi tải PDF lên Gemini ({upload_err}). Tự động chuyển sang chế độ văn bản.")
+                                    prompt_with_fallback = prompt + f"\n\nNội dung text sách giáo khoa:\n{textbook_content[:60000]}"
+                                    response = generate_content_with_retry(
+                                        client,
+                                        model='gemini-2.5-flash',
+                                        contents=prompt_with_fallback,
+                                        config=types.GenerateContentConfig(
+                                            response_mime_type="application/json",
+                                            response_schema=LessonPayload,
+                                            temperature=0.3,
+                                        )
+                                    )
+                            else:
+                                # Fallback nếu không có file PDF
+                                prompt_with_fallback = prompt + f"\n\nNội dung text sách giáo khoa:\n{textbook_content[:60000]}"
+                                response = generate_content_with_retry(
+                                    client,
+                                    model='gemini-2.5-flash',
+                                    contents=prompt_with_fallback,
+                                    config=types.GenerateContentConfig(
+                                        response_mime_type="application/json",
+                                        response_schema=LessonPayload,
+                                        temperature=0.3,
+                                    )
+                                )
+                                
+                            lesson_data: LessonPayload = response.parsed
+                            
+                            if lesson_data:
+                                questions_list = []
+                                for q in lesson_data.questions:
+                                    questions_list.append({
+                                        "question_number": q.question_number,
+                                        "question_type": q.question_type,
+                                        "prompt": q.prompt,
+                                        "options": q.options,
+                                        "correct_answer": q.correct_answer
+                                    })
+                                questions_json = json.dumps(questions_list, ensure_ascii=False)
+                                
+                                success = save_lesson(
+                                    selected_sub_lesson,
+                                    lesson_number,
+                                    lesson_data.title,
+                                    lesson_data.lecture_content,
+                                    questions_json,
+                                    lesson_data.duration_minutes
+                                )
+                                
+                                if success:
+                                    st.success(f"Đã soạn thảo và lưu Buổi {lesson_number}: {lesson_data.title} thành công!")
+                                    current_lesson = {
+                                        "title": lesson_data.title,
+                                        "lecture_content": lesson_data.lecture_content,
+                                        "questions": questions_json,
+                                        "duration": lesson_data.duration_minutes
+                                    }
+                        except Exception as e:
+                            st.error(f"Lỗi khi AI soạn giáo án: {e}")
+                
+                if current_lesson:
+                    st.markdown(f"#### Buổi {lesson_number}: {current_lesson['title']}")
+                    st.write(f"⏱️ **Thời gian làm bài thi:** {current_lesson['duration']} phút")
+                    
+                    with st.expander("📖 Xem nội dung bài giảng chi tiết (5 mục chuẩn)", expanded=True):
+                        st.markdown(current_lesson['lecture_content'])
+                    
+                    with st.expander("✍️ Xem đề kiểm tra (15 câu)", expanded=False):
+                        questions = json.loads(current_lesson['questions'])
+                        st.info(f"Tổng số câu hỏi: {len(questions)} câu (10 trắc nghiệm, 5 tự luận)")
+                        for q in questions:
+                            st.markdown(f"**Câu {q['question_number']} ({'Trắc nghiệm' if q['question_type'] == 'multiple_choice' else 'Tự luận'}):** {q['prompt']}")
+                            if q['question_type'] == 'multiple_choice' and q['options']:
+                                for opt in q['options']:
+                                    st.write(f"  {opt}")
+                            st.info(f"💡 **Đáp án/Hướng dẫn:** {q['correct_answer']}")
+                else:
+                    st.info(f"Chưa có nội dung soạn thảo cho Buổi {lesson_number}. Hãy bấm nút bên trái để tạo.")
+
+    # TAB 3: GIÁM SÁT KẾT QUẢ
+    with tab3:
+        st.subheader("Bảng điểm & Chi tiết bài kiểm tra của con")
+        
+        grades_list = get_grades_for_parent()
+        if not grades_list:
+            st.info("Chưa có học sinh nào nộp bài kiểm tra.")
+        else:
+            df_data = []
+            for idx, g in enumerate(grades_list):
+                df_data.append({
+                    "STT": idx + 1,
+                    "Học sinh": g['student_username'],
+                    "Môn học": g['subject'],
+                    "Buổi": f"Buổi {g['lesson_number']}",
+                    "Tên bài học": g['lesson_title'],
+                    "Điểm số": f"{g['score']:.1f} / 10.0",
+                    "Thời gian nộp": g['submitted_at']
+                })
+            
+            st.dataframe(df_data, use_container_width=True)
+            
+            st.write("---")
+            st.write("### 🔍 Xem chi tiết bài kiểm tra")
+            
+            grade_options = [
+                f"STT {g['STT']}. {g['Học sinh']} - {g['Môn học']} ({g['Buổi']}) - Điểm: {g['Điểm số']}"
+                for g in df_data
+            ]
+            
+            selected_grade_str = st.selectbox("Chọn bài thi muốn kiểm tra chi tiết:", grade_options)
+            try:
+                selected_stt = int(selected_grade_str.split(".")[0].split()[-1])
+                selected_idx = selected_stt - 1
+                selected_grade = grades_list[selected_idx]
+            except Exception:
+                selected_grade = None
+            
+            if selected_grade:
+                col_score, col_feedback = st.columns([1, 3])
+                
+                with col_score:
+                    score = selected_grade['score']
+                    score_color = "score-good" if score >= 8 else "score-average" if score >= 5 else "score-poor"
+                    st.markdown(
+                        f"""
+                        <div class='custom-card' style='text-align: center;'>
+                            <h4>Điểm Số</h4>
+                            <div class='score-display {score_color}'>{score:.1f}</div>
+                            <p style='color:#94a3b8;'>Hệ điểm 10.0</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                    
+                with col_feedback:
+                    ai_fb = json.loads(selected_grade['ai_feedback'])
+                    st.markdown(
+                        f"""
+                        <div class='custom-card'>
+                            <h4>Nhận xét tổng quan từ AI</h4>
+                            <p style='font-style: italic; line-height: 1.6;'>"{ai_fb.get('overall_feedback', '')}"</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                
+                st.write("#### 📑 Báo cáo chi tiết từng câu hỏi (15 câu):")
+                
+                detailed_fb = ai_fb.get('detailed_feedback', [])
+                original_questions = json.loads(selected_grade['original_questions'])
+                student_answers = json.loads(selected_grade['answers'])
+                
+                for idx, q_fb in enumerate(detailed_fb):
+                    q_num = q_fb.get('question_number', idx + 1)
+                    orig_q = next((q for q in original_questions if q['question_number'] == q_num), None)
+                    
+                    status_icon = "🟢" if q_fb.get('is_correct', False) else "🔴"
+                    card_border = "border-left: 5px solid #22c55e;" if q_fb.get('is_correct', False) else "border-left: 5px solid #ef4444;"
+                    
+                    st.markdown(
+                        f"""
+                        <div class='custom-card' style='{card_border} padding: 15px 20px; margin-bottom: 10px;'>
+                            <div style='display: flex; justify-content: space-between;'>
+                                <strong>Câu hỏi {q_num} ({orig_q['question_type'] if orig_q else 'unknown'})</strong>
+                                <span>Điểm đạt: <strong>{q_fb.get('score_awarded', 0.0):.2f} / 1.00</strong> {status_icon}</span>
+                            </div>
+                            <div style='margin-top: 10px; color:#e2e8f0;'>
+                                {orig_q['prompt'] if orig_q else ''}
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                    
+                    if orig_q and orig_q['question_type'] == 'multiple_choice' and orig_q['options']:
+                        for opt in orig_q['options']:
+                            st.write(f"  {opt}")
+                    
+                    col_ans, col_exp = st.columns(2)
+                    with col_ans:
+                        st.markdown(f"**✍️ Bài làm của con:** `{q_fb.get('student_answer', '')}`")
+                        if orig_q:
+                            st.markdown(f"💡 **Đáp án chuẩn:** `{orig_q['correct_answer']}`")
+                    with col_exp:
+                        st.markdown(f"🤖 **AI Giải thích & Nhận xét:** {q_fb.get('correct_explanation', '')}")
+                    st.write("---")
+
+
+# --- GIAO DIỆN HỌC SINH ---
+
+def start_new_exam(lesson):
+    st.session_state['exam_in_progress'] = True
+    st.session_state['exam_lesson'] = lesson
+    st.session_state['exam_start_time'] = datetime.datetime.now()
+    st.rerun()
+
+def show_student_interface(client):
+    st.markdown("<h1>Không Gian <span class='student-gradient-text'>Học Tập</span> <span class='badge badge-student'>Student Workspace</span></h1>", unsafe_allow_html=True)
+    
+    if st.session_state.get('exam_in_progress', False):
+        show_exam_taking_room(client)
+        return
+        
+    if st.session_state.get('just_submitted', False):
+        show_exam_result_room()
+        return
+
+    subjects = get_subjects()
+    if not subjects:
+        st.info("Ba mẹ chưa tạo lộ trình môn học nào. Hãy nhắc ba mẹ vào tài khoản phụ huynh để tạo bài học nhé!")
+        return
+        
+    col_sel, col_main = st.columns([1, 3])
+    
+    with col_sel:
+        st.write("### 📚 Chọn bài học")
+        selected_subject = st.selectbox("Chọn môn học:", subjects)
+        
+        lessons = get_lessons_for_subject(selected_subject)
+        
+        if not lessons:
+            st.warning("Môn học này chưa được ba mẹ soạn giáo án nào.")
+            selected_lesson_num = None
+        else:
+            lesson_options = [f"Buổi {l['lesson_number']}: {l['title']}" for l in lessons]
+            selected_lesson_str = st.selectbox("Chọn buổi học:", lesson_options)
+            selected_lesson_num = lessons[lesson_options.index(selected_lesson_str)]['lesson_number']
+            
+    with col_main:
+        if selected_lesson_num:
+            lesson = get_lesson_detail(selected_subject, selected_lesson_num)
+            
+            st.markdown(f"## Buổi {selected_lesson_num}: {lesson['title']}")
+            
+            grade_record = get_grade_for_student(st.session_state['username'], lesson['id'])
+            
+            if grade_record:
+                score = grade_record['score']
+                score_color = "score-good" if score >= 8 else "score-average" if score >= 5 else "score-poor"
+                st.markdown(
+                    f"""
+                    <div class='custom-card' style='display:flex; align-items:center; justify-content:space-between; border-left:5px solid #22c55e;'>
+                        <div>
+                            <h4 style='margin:0;'>🎉 Bạn đã hoàn thành bài kiểm tra này!</h4>
+                            <p style='margin:5px 0 0 0; color:#94a3b8;'>Nộp vào lúc: {grade_record['submitted_at']}</p>
+                        </div>
+                        <div style='text-align:right;'>
+                            <span style='font-size:0.9rem; color:#94a3b8;'>Điểm số đạt được:</span>
+                            <div class='{score_color}' style='font-size:2rem; font-weight:800; margin:0;'>{score:.1f} / 10.0</div>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                
+            tab_lecture, tab_practice = st.tabs(["📖 Bài giảng lý thuyết (5 mục)", "✍️ Bài kiểm tra"])
+            
+            with tab_lecture:
+                st.markdown(lesson['lecture_content'])
+                
+            with tab_practice:
+                if grade_record:
+                    st.info("Bạn đã làm bài kiểm tra này rồi. Bạn muốn xem lại phản hồi của AI hay làm lại bài?")
+                    col_btn1, col_btn2 = st.columns(2)
+                    with col_btn1:
+                        if st.button("Xem lại nhận xét chi tiết 🤖", use_container_width=True):
+                            st.session_state['result_grade'] = grade_record
+                            st.session_state['result_lesson'] = lesson
+                            st.session_state['just_submitted'] = True
+                            st.rerun()
+                    with col_btn2:
+                        if st.button("Làm lại bài kiểm tra 🔄", use_container_width=True):
+                            start_new_exam(lesson)
+                else:
+                    st.write(f"📝 Đề thi bao gồm **15 câu hỏi** (10 câu trắc nghiệm kết hợp 5 câu tự luận).")
+                    st.write(f"⏱️ **Thời gian làm bài:** `{lesson['duration']}` phút.")
+                    st.warning("⚠️ Sau khi bấm nút bắt đầu, bộ đếm thời gian sẽ chạy. Hãy tập trung làm bài nhé!")
+                    
+                    if st.button("🚀 Bắt đầu làm bài", use_container_width=True):
+                        start_new_exam(lesson)
+
+
+# --- PHÒNG THI BẤM GIỜ ---
+
+def show_exam_taking_room(client):
+    lesson = st.session_state['exam_lesson']
+    start_time = st.session_state['exam_start_time']
+    duration = lesson['duration']
+    
+    end_time = start_time + datetime.timedelta(minutes=duration)
+    now = datetime.datetime.now()
+    remaining_seconds = int((end_time - now).total_seconds())
+    
+    if remaining_seconds <= 0:
+        st.warning("⏳ Đã hết thời gian làm bài! Đang tự động nộp bài...")
+        submit_exam(client, lesson, is_auto_submit=True)
+        return
+
+    st.markdown(f"## 📝 Bài Kiểm Tra: Buổi {lesson['lesson_number']} - {lesson['title']}")
+    
+    end_time_iso = end_time.isoformat()
+    with st.sidebar:
+        st.components.v1.html(
+            f"""
+            <div style="background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1px solid #cbd5e1; border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); font-family: sans-serif;">
+                <div style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; color: #64748b; margin-bottom: 8px; font-weight: 600;">Thời gian còn lại</div>
+                <div id="visual-timer" style="font-size: 2.25rem; font-weight: 800; color: #0284c7; font-family: monospace; font-variant-numeric: tabular-nums;">--:--</div>
+            </div>
+            <script>
+                (function() {{
+                    const endTime = new Date("{end_time_iso}").getTime();
+                    const timerInterval = setInterval(function() {{
+                        const now = new Date().getTime();
+                        const distance = endTime - now;
+                        
+                        if (distance <= 0) {{
+                            clearInterval(timerInterval);
+                            const clock = document.getElementById("visual-timer");
+                            if (clock) {{
+                                clock.innerHTML = "HẾT GIỜ!";
+                                clock.style.color = "#ef4444";
+                            }}
+                            
+                            try {{
+                                const parentDoc = window.parent.document;
+                                const buttons = parentDoc.querySelectorAll("button");
+                                for (let btn of buttons) {{
+                                    if (btn.innerText.indexOf("Nộp Bài") !== -1 || btn.innerText.indexOf("Nộp bài") !== -1) {{
+                                        btn.click();
+                                        break;
+                                    }}
+                                }}
+                            }} catch(e) {{
+                                console.log("Iframe sandbox block access:", e);
+                            }}
+                        }} else {{
+                            const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+                            const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+                            const displayMin = minutes < 10 ? "0" + minutes : minutes;
+                            const displaySec = seconds < 10 ? "0" + seconds : seconds;
+                            const clock = document.getElementById("visual-timer");
+                            if (clock) {{
+                                clock.innerHTML = displayMin + ":" + displaySec;
+                                if (minutes < 2) {{
+                                    clock.style.color = "#f59e0b";
+                                }}
+                                if (minutes < 1 && seconds < 30) {{
+                                    clock.style.color = "#ef4444";
+                                }}
+                            }}
+                        }}
+                    }}, 1000);
+                }})();
+            </script>
+            """,
+            height=150
+        )
+    
+    questions = json.loads(lesson['questions'])
+    
+    with st.form(key="visual_taking_form"):
+        st.write("👉 Hãy đọc kỹ câu hỏi và điền câu trả lời hoàn chỉnh của bạn.")
+        
+        answers_dict = {}
+        for q in questions:
+            q_num = q['question_number']
+            st.markdown(f"#### Câu {q_num} ({'Trắc nghiệm' if q['question_type'] == 'multiple_choice' else 'Tự luận'}): {q['prompt']}")
+            
+            if q['question_type'] == 'multiple_choice' and q['options']:
+                ans = st.radio(
+                    f"Chọn đáp án đúng cho câu {q_num}:",
+                    options=q['options'],
+                    index=None,
+                    key=f"q_{q_num}",
+                    label_visibility="collapsed"
+                )
+                answers_dict[str(q_num)] = ans.split(".")[0].strip() if ans else ""
+            else:
+                ans = st.text_area(
+                    f"Nhập câu trả lời tự luận cho câu {q_num}:",
+                    placeholder="Viết lời giải chi tiết của bạn tại đây...",
+                    key=f"q_{q_num}",
+                    label_visibility="collapsed"
+                )
+                answers_dict[str(q_num)] = ans.strip() if ans else ""
+            st.write("---")
+            
+        btn_submit = st.form_submit_button("Nộp Bài Thi 💾", use_container_width=True)
+        
+        if btn_submit:
+            st.session_state['exam_answers'] = answers_dict
+            submit_exam(client, lesson, is_auto_submit=False)
+
+
+def submit_exam(client, lesson, is_auto_submit=False):
+    answers = st.session_state.get('exam_answers', {})
+    
+    if not answers:
+        questions = json.loads(lesson['questions'])
+        answers = {str(q['question_number']): "" for q in questions}
+        
+    questions_list = json.loads(lesson['questions'])
+    
+    questions_formatted = json.dumps(questions_list, ensure_ascii=False, indent=2)
+    answers_formatted = json.dumps(answers, ensure_ascii=False, indent=2)
+    
+    prompt = f"""
+    Bạn là một giáo viên/giám khảo thông thái và nghiêm khắc. Hãy chấm điểm bài kiểm tra gồm 15 câu hỏi dưới đây của học sinh (gồm 10 câu trắc nghiệm và 5 câu tự luận).
+    
+    Đề kiểm tra gốc:
+    {questions_formatted}
+    
+    Bài làm của học sinh:
+    {answers_formatted}
+    
+    Yêu cầu chấm điểm:
+    1. Chấm điểm chi tiết từng câu trong 15 câu hỏi (từ 1 đến 15). Mỗi câu tối đa 1.0 điểm chuẩn (hoặc điểm quy đổi).
+       - Với câu trắc nghiệm (10 câu): Học sinh chọn chữ cái tương ứng với đáp án đúng (A, B, C, D). Đúng được 1.0 điểm, sai được 0.0 điểm.
+       - Với câu tự luận (5 câu): Đọc câu trả lời, so sánh với đáp án chuẩn. Cho điểm từ 0.0 đến 1.0 tùy mức độ.
+    2. Quy đổi tổng điểm bài kiểm tra (total_score) về thang điểm 10. Hãy tính toán chính xác, công bằng và nghiêm khắc.
+    3. Trả về nhận xét chung (overall_feedback) phân tích ưu nhược điểm bài thi và chi tiết chấm điểm từng câu (detailed_feedback).
+    """
+    
+    with st.spinner("AI đang chấm điểm chi tiết bài làm của bạn... Vui lòng đợi trong giây lát."):
+        try:
+            response = generate_content_with_retry(
+                client,
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=GradePayload,
+                    temperature=0.1,
+                )
+            )
+            grading_result: GradePayload = response.parsed
+            
+            if grading_result:
+                ai_feedback_dict = {
+                    "total_score": grading_result.total_score,
+                    "overall_feedback": grading_result.overall_feedback,
+                    "detailed_feedback": [
+                        {
+                            "question_number": f.question_number,
+                            "student_answer": f.student_answer,
+                            "is_correct": f.is_correct,
+                            "score_awarded": f.score_awarded,
+                            "correct_explanation": f.correct_explanation
+                        }
+                        for f in grading_result.detailed_feedback
+                    ]
+                }
+                ai_feedback_json = json.dumps(ai_feedback_dict, ensure_ascii=False)
+                answers_json = json.dumps(answers, ensure_ascii=False)
+                
+                save_grade(
+                    st.session_state['username'],
+                    lesson['id'],
+                    answers_json,
+                    grading_result.total_score,
+                    ai_feedback_json
+                )
+                
+                st.session_state['result_grade'] = {
+                    "score": grading_result.total_score,
+                    "answers": answers_json,
+                    "ai_feedback": ai_feedback_json,
+                    "submitted_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                st.session_state['result_lesson'] = lesson
+                st.session_state['just_submitted'] = True
+                
+                st.session_state['exam_in_progress'] = False
+                st.session_state['exam_answers'] = {}
+                st.session_state['exam_lesson'] = None
+                
+                st.rerun()
+        except Exception as e:
+            st.error(f"Lỗi khi AI chấm điểm bài thi: {e}")
+
+
+# --- PHÒNG HIỂN THỊ KẾT QUẢ CHẤM ĐIỂM ---
+
+def show_exam_result_room():
+    grade = st.session_state['result_grade']
+    lesson = st.session_state['result_lesson']
+    
+    st.balloons()
+    st.markdown("## 🎉 Kết Quả Bài Làm Kiểm Tra")
+    st.success("Bạn đã hoàn thành bài kiểm tra! Dưới đây là nhận xét và điểm số từ Giám khảo AI.")
+    
+    col_score, col_overall = st.columns([1, 2])
+    
+    ai_fb = json.loads(grade['ai_feedback'])
+    score = grade['score']
+    
+    with col_score:
+        score_color = "score-good" if score >= 8 else "score-average" if score >= 5 else "score-poor"
+        st.markdown(
+            f"""
+            <div class='custom-card' style='text-align: center;'>
+                <h4>Tổng Điểm</h4>
+                <div class='score-display {score_color}'>{score:.1f} / 10.0</div>
+                <p style='color: #94a3b8;'>Đã lưu kết quả thành công vào hệ thống!</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
+    with col_overall:
+        st.markdown(
+            f"""
+            <div class='custom-card'>
+                <h4>Nhận xét tổng quan của Thầy Cô AI:</h4>
+                <p style='line-height:1.6; font-style:italic;'>"{ai_fb.get('overall_feedback', '')}"</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
+    st.write("---")
+    st.write("### 📝 Sửa bài kiểm tra chi tiết từng câu (15 câu):")
+    
+    detailed_fb = ai_fb.get('detailed_feedback', [])
+    original_questions = json.loads(lesson['questions'])
+    
+    for idx, q_fb in enumerate(detailed_fb):
+        q_num = q_fb.get('question_number', idx + 1)
+        orig_q = next((q for q in original_questions if q['question_number'] == q_num), None)
+        
+        status_icon = "🟢 Đúng" if q_fb.get('is_correct', False) else "🔴 Sai"
+        card_border = "border-left: 5px solid #22c55e;" if q_fb.get('is_correct', False) else "border-left: 5px solid #ef4444;"
+        
+        st.markdown(
+            f"""
+            <div class='custom-card' style='{card_border} padding: 15px 20px; margin-bottom: 10px;'>
+                <div style='display: flex; justify-content: space-between;'>
+                    <strong>Câu {q_num}</strong>
+                    <span>Trạng thái: {status_icon} | Điểm số: <strong>{q_fb.get('score_awarded', 0.0):.2f} / 1.00</strong></span>
+                </div>
+                <div style='margin-top: 10px;'>
+                    {orig_q['prompt'] if orig_q else ''}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        if orig_q and orig_q['question_type'] == 'multiple_choice' and orig_q['options']:
+            for opt in orig_q['options']:
+                st.write(f"  {opt}")
+                
+        col_ans, col_exp = st.columns(2)
+        with col_ans:
+            st.markdown(f"👉 **Câu trả lời của bạn:** `{q_fb.get('student_answer', '')}`")
+            if orig_q:
+                st.markdown(f"💡 **Đáp án đúng:** `{orig_q['correct_answer']}`")
+        with col_exp:
+            st.markdown(f"🤖 **Hướng dẫn sửa từ AI:** {q_fb.get('correct_explanation', '')}")
+        st.write("---")
+        
+    if st.button("Quay lại Trang Chủ Bài Học", use_container_width=True):
+        st.session_state['just_submitted'] = False
+        st.session_state['result_grade'] = None
+        st.session_state['result_lesson'] = None
+        st.rerun()
+
+
+# --- HÀM MAIN ĐIỀU PHỐI CHÍNH ---
+
+def main():
+    inject_custom_css()
+    
+    if 'logged_in' not in st.session_state:
+        st.session_state['logged_in'] = False
+        
+    if not st.session_state['logged_in']:
+        st.markdown(
+            """
+            <div class='custom-card' style='max-width: 450px; margin: 80px auto; text-align: center;'>
+                <h2>🔑 Đăng Nhập Hệ Thống</h2>
+                <p style='color: #475569; font-size: 0.9rem;'>Ứng Dụng Học Tập Gia Đình Riêng Tư</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        with st.form("login_form"):
+            username = st.text_input("Tên đăng nhập:", placeholder="Nhập phuhuynh hoặc hocsinh")
+            password = st.text_input("Mật khẩu:", type="password", placeholder="Nhập mật khẩu")
+            btn_submit = st.form_submit_button("Đăng Nhập 🔓", use_container_width=True)
+            
+            if btn_submit:
+                user = verify_user(username, password)
+                if user:
+                    st.session_state['logged_in'] = True
+                    st.session_state['username'] = user['username']
+                    st.session_state['role'] = user['role']
+                    st.success("Đăng nhập thành công!")
+                    st.rerun()
+                else:
+                    st.error("❌ Sai tên đăng nhập hoặc mật khẩu!")
+        return
+
+    client = get_gemini_client()
+    
+    st.sidebar.markdown(f"### 👋 Xin chào, **{st.session_state['username']}**!")
+    role_name = "Phụ huynh" if st.session_state['role'] == 'parent' else "Học sinh"
+    badge_style = "badge-parent" if st.session_state['role'] == 'parent' else "badge-student"
+    st.sidebar.markdown(f"<span class='badge {badge_style}'>{role_name}</span>", unsafe_allow_html=True)
+    st.sidebar.write("---")
+    
+    if st.sidebar.button("Đăng Xuất 🚪", use_container_width=True):
+        st.session_state['logged_in'] = False
+        st.session_state['username'] = None
+        st.session_state['role'] = None
+        st.session_state['exam_in_progress'] = False
+        st.session_state['just_submitted'] = False
+        st.rerun()
+
+    if not client:
+        st.info("Vui lòng thiết lập API Key của Gemini ở cột bên trái để sử dụng đầy đủ các tính năng AI.")
+        return
+
+    if st.session_state['role'] == 'parent':
+        show_parent_interface(client)
+    else:
+        show_student_interface(client)
+
+
+if __name__ == '__main__':
+    main()
