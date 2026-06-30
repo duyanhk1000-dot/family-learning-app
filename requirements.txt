@@ -1,4 +1,4 @@
-streamlit
-google-genai
-pydantic
-pypdf
+streamlit>=1.35.0
+google-genai>=0.1.1
+pydantic>=2.0.0
+pypdf>=4.0.0

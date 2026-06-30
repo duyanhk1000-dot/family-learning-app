@@ -1,4 +1,30 @@
+# Python virtual environment
 .venv/
+env/
+venv/
+ENV/
+
+# Python caching
 __pycache__/
+*.py[cod]
+*$py.class
+
+# Local SQLite databases
 *.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Local user textbook storage
 data/
+data/textbooks/
+
+# Local Streamlit config / secrets
+.streamlit/secrets.toml
+
+# Environment variables
+.env
+
+# System files
+.DS_Store
+Thumbs.db
