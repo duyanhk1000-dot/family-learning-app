@@ -1013,7 +1013,13 @@ def show_sidebar_chat():
     else:
         for msg in messages:
             sender_label = "Bạn" if msg['sender'] == current_user else ("Phụ huynh" if msg['sender'] == 'phuhuynh' else "Con")
-            bubble_style = "background: linear-gradient(135deg, #0284c7 0%, #3b82f6 100%); color: white; align-self: flex-end; margin-left: auto; border-bottom-right-radius: 2px;" if msg['sender'] == current_user else "background-color: #e2e8f0; color: #1e293b; align-self: flex-start; margin-right: auto; border-bottom-left-radius: 2px;"
+            
+            # Người đăng nhập: chữ đen, nền xanh nhạt (#9fc5e8)
+            # Người khác: chữ đen, nền trắng (#ffffff)
+            if msg['sender'] == current_user:
+                bubble_style = "background-color: #9fc5e8; color: #1e293b; align-self: flex-end; margin-left: auto; border-bottom-right-radius: 2px; border: 1px solid #7ea6cd;"
+            else:
+                bubble_style = "background-color: #ffffff; color: #1e293b; align-self: flex-start; margin-right: auto; border-bottom-left-radius: 2px; border: 1px solid #cbd5e1;"
             
             try:
                 if isinstance(msg['created_at'], str):
@@ -1024,19 +1030,23 @@ def show_sidebar_chat():
             except Exception:
                 time_str = ""
                 
-            chat_html += f"""
-            <div style="margin-bottom: 8px; padding: 6px 10px; border-radius: 10px; font-size: 0.75rem; max-width: 85%; line-height: 1.3; {bubble_style}">
-                <div style="font-size:0.6rem; font-weight:700; opacity:0.85; margin-bottom:2px;">{sender_label}</div>
-                <div>{msg['message']}</div>
-                <div style="font-size:0.55rem; text-align:right; margin-top:2px; opacity:0.85;">{time_str}</div>
-            </div>
-            """
+            # Tên người gửi màu da cam (#e69138)
+            chat_html += f'<div style="margin-bottom: 8px; padding: 6px 10px; border-radius: 10px; font-size: 0.75rem; max-width: 85%; line-height: 1.3; {bubble_style}">'
+            chat_html += f'<div style="font-size:0.6rem; font-weight:700; color: #e69138; margin-bottom:2px;">{sender_label}</div>'
+            chat_html += f'<div style="word-break: break-word;">{msg["message"]}</div>'
+            chat_html += f'<div style="font-size:0.55rem; text-align:right; margin-top:2px; opacity:0.7;">{time_str}</div>'
+            chat_html += '</div>'
+            
     chat_html += '</div>'
+    
+    # Loại bỏ các khoảng trắng thừa đầu dòng và xuống dòng để Streamlit không biến thành thẻ pre code
+    chat_html = chat_html.replace('\n', '').replace('    ', '')
+    
     st.sidebar.markdown(chat_html, unsafe_allow_html=True)
     
-    # Form nhập tin nhắn trong sidebar
+    # Form nhập tin nhắn trong sidebar (điều chỉnh cột [4, 1.5] để chữ "Gửi" không bị tràn xuống dòng)
     with st.sidebar.form("sidebar_chat_form", clear_on_submit=True):
-        col_inp, col_send = st.columns([3, 1])
+        col_inp, col_send = st.columns([4, 1.5])
         with col_inp:
             new_msg = st.text_input("Nhắn tin...", label_visibility="collapsed", placeholder="Nhập tin nhắn...", key="sidebar_chat_input")
         with col_send:
