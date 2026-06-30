@@ -31,10 +31,15 @@ class Question(BaseModel):
     options: Optional[List[str]] = Field(None, description="Danh sách 4 lựa chọn cho trắc nghiệm (ví dụ: ['A. ...', 'B. ...', 'C. ...', 'D. ...']). Để None cho tự luận.")
     correct_answer: str = Field(..., description="Đáp án đúng. Trắc nghiệm: Ghi rõ chữ cái 'A', 'B', 'C', hoặc 'D'. Tự luận: Lời giải mẫu chi tiết.")
 
+class FlashcardItem(BaseModel):
+    front: str = Field(..., description="Mặt trước: Câu hỏi nhanh, công thức viết tắt, thuật ngữ khoa học hoặc sự kiện cần nhớ")
+    back: str = Field(..., description="Mặt sau: Lời giải thích chi tiết, công thức đầy đủ, định nghĩa khoa học hoặc câu trả lời")
+
 class LessonPayload(BaseModel):
     title: str = Field(..., description="Tiêu đề buổi học")
     lecture_content: str = Field(..., description="Nội dung bài giảng chi tiết, dễ hiểu, theo đúng cấu trúc 5 phần, sử dụng Markdown và LaTeX cho công thức toán học.")
     duration_minutes: int = Field(..., description="Thời gian làm bài thi (phút), từ 30 đến 60 phút.")
+    flashcards: List[FlashcardItem] = Field(..., description="Danh sách ĐÚNG 15 thẻ Flashcard ôn tập các kiến thức cốt lõi, từ vựng hoặc sự kiện quan trọng nhất cần nhớ của buổi học này.")
     questions: List[Question] = Field(..., description="Danh sách ĐÚNG 15 câu hỏi kiểm tra (10 câu trắc nghiệm, 5 câu tự luận).")
 
 class QuestionFeedback(BaseModel):
@@ -109,9 +114,14 @@ def init_postgres_tables(conn):
                 lecture_content TEXT NOT NULL,
                 questions TEXT NOT NULL,
                 duration INTEGER NOT NULL,
+                flashcards TEXT,
                 UNIQUE(subject, lesson_number)
             );
             """)
+            try:
+                cursor.execute("ALTER TABLE Lessons ADD COLUMN IF NOT EXISTS flashcards TEXT;")
+            except Exception:
+                pass
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS Grades (
                 id SERIAL PRIMARY KEY,
@@ -169,9 +179,14 @@ def init_sqlite_tables(conn):
             lecture_content TEXT NOT NULL,
             questions TEXT NOT NULL,
             duration INTEGER NOT NULL,
+            flashcards TEXT,
             UNIQUE(subject, lesson_number)
         );
         """)
+        try:
+            cursor.execute("ALTER TABLE Lessons ADD COLUMN flashcards TEXT;")
+        except Exception:
+            pass
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS Grades (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,13 +227,14 @@ class PostgresWrapper:
             """
         elif "INSERT OR REPLACE INTO Lessons" in query:
             query = """
-            INSERT INTO Lessons (subject, lesson_number, title, lecture_content, questions, duration)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO Lessons (subject, lesson_number, title, lecture_content, questions, duration, flashcards)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (subject, lesson_number) DO UPDATE SET
                 title = EXCLUDED.title,
                 lecture_content = EXCLUDED.lecture_content,
                 questions = EXCLUDED.questions,
-                duration = EXCLUDED.duration
+                duration = EXCLUDED.duration,
+                flashcards = EXCLUDED.flashcards
             """
         elif "INSERT OR REPLACE INTO Users" in query:
             query = """
@@ -399,7 +415,7 @@ def get_lesson_detail(subject, lesson_number):
     try:
         with get_db() as conn:
             row = conn.execute(
-                "SELECT id, lesson_number, title, lecture_content, questions, duration FROM Lessons WHERE subject = ? AND lesson_number = ?",
+                "SELECT id, lesson_number, title, lecture_content, questions, duration, flashcards FROM Lessons WHERE subject = ? AND lesson_number = ?",
                 (subject, lesson_number)
             ).fetchone()
             if row:
@@ -408,15 +424,15 @@ def get_lesson_detail(subject, lesson_number):
         st.error(f"Lỗi lấy thông tin bài học chi tiết: {e}")
     return None
 
-def save_lesson(subject, lesson_number, title, lecture_content, questions_json, duration):
+def save_lesson(subject, lesson_number, title, lecture_content, questions_json, duration, flashcards_json):
     try:
         with get_db() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO Lessons (subject, lesson_number, title, lecture_content, questions, duration)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO Lessons (subject, lesson_number, title, lecture_content, questions, duration, flashcards)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (subject, lesson_number, title, lecture_content, questions_json, duration)
+                (subject, lesson_number, title, lecture_content, questions_json, duration, flashcards_json)
             )
             conn.commit()
             return True
@@ -671,6 +687,87 @@ def inject_custom_css():
             background-color: #ffffff !important;
             color: #0f172a !important;
             box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1) !important;
+        }
+        /* CSS phong cách Flashcard lật 3D */
+        .flashcard-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 20px auto;
+            perspective: 1000px;
+        }
+        
+        .flip-card {
+            background-color: transparent;
+            width: 480px;
+            height: 280px;
+            perspective: 1000px;
+            cursor: pointer;
+        }
+        
+        .flip-card-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            text-align: center;
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            transform-style: preserve-3d;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            border-radius: 16px;
+        }
+        
+        /* Khi hover thì xoay lật */
+        .flip-card:hover .flip-card-inner {
+            transform: rotateY(180deg);
+        }
+        
+        .flip-card-front, .flip-card-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 30px;
+            box-sizing: border-box;
+        }
+        
+        .flip-card-front {
+            background: linear-gradient(135deg, #0284c7 0%, #3b82f6 100%);
+            color: #ffffff;
+        }
+        
+        .flip-card-back {
+            background-color: #ffffff;
+            color: #1e293b;
+            border: 2px solid #e2e8f0;
+            transform: rotateY(180deg);
+        }
+        
+        .flashcard-title {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 12px;
+            opacity: 0.8;
+            font-weight: 700;
+        }
+        
+        .flashcard-content {
+            font-size: 1.45rem;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+        
+        .flashcard-hint {
+            font-size: 0.8rem;
+            margin-top: 20px;
+            opacity: 0.7;
+            font-style: italic;
         }
         
         </style>
@@ -1047,6 +1144,9 @@ def show_parent_interface(client):
                             Hãy điền đầy đủ đáp án chuẩn hoặc hướng dẫn chấm vào từng câu.
 
                             C. Đề xuất thời gian làm bài (duration_minutes) hợp lý từ 30 đến 60 phút.
+
+                            D. Yêu cầu chi tiết về 15 THẺ FLASHCARD (flashcards):
+                            Thiết kế ĐÚNG 15 thẻ Flashcard ôn tập (mỗi thẻ có mặt trước 'front' và mặt sau 'back') chứa đựng các công thức toán/lý/hóa quan trọng, thuật ngữ trọng tâm, từ mới tiếng Anh (hoặc ngoại ngữ khác), sự kiện lịch sử/địa lý quan trọng để học sinh kiểm tra nhanh.
                             """
                             
                             # Tải file PDF hoặc sử dụng text fallback để gửi cho Gemini
@@ -1137,13 +1237,24 @@ def show_parent_interface(client):
                                     })
                                 questions_json = json.dumps(questions_list, ensure_ascii=False)
                                 
+                                # Đóng gói Flashcards
+                                flashcards_list = []
+                                if lesson_data.flashcards:
+                                    for fc in lesson_data.flashcards:
+                                        flashcards_list.append({
+                                            "front": fc.front,
+                                            "back": fc.back
+                                        })
+                                flashcards_json = json.dumps(flashcards_list, ensure_ascii=False)
+                                
                                 success = save_lesson(
                                     selected_sub_lesson,
                                     lesson_number,
                                     lesson_data.title,
                                     lesson_data.lecture_content,
                                     questions_json,
-                                    lesson_data.duration_minutes
+                                    lesson_data.duration_minutes,
+                                    flashcards_json
                                 )
                                 
                                 if success:
@@ -1152,7 +1263,8 @@ def show_parent_interface(client):
                                         "title": lesson_data.title,
                                         "lecture_content": lesson_data.lecture_content,
                                         "questions": questions_json,
-                                        "duration": lesson_data.duration_minutes
+                                        "duration": lesson_data.duration_minutes,
+                                        "flashcards": flashcards_json
                                     }
                         except Exception as e:
                             st.error(f"Lỗi khi AI soạn giáo án: {e}")
@@ -1164,6 +1276,18 @@ def show_parent_interface(client):
                     with st.expander("📖 Xem nội dung bài giảng chi tiết (5 mục chuẩn)", expanded=True):
                         st.markdown(current_lesson['lecture_content'])
                     
+                    with st.expander("🗂️ Xem 15 thẻ Flashcard ghi nhớ", expanded=False):
+                        if current_lesson.get('flashcards'):
+                            fc_list = json.loads(current_lesson['flashcards'])
+                            st.write(f"Tổng số thẻ: {len(fc_list)} thẻ")
+                            for idx, fc in enumerate(fc_list):
+                                st.markdown(f"**Thẻ {idx+1}:**")
+                                st.markdown(f"- **Mặt trước (Câu hỏi/Từ):** {fc['front']}")
+                                st.markdown(f"- **Mặt sau (Giải thích/Nghĩa):** {fc['back']}")
+                                st.write("---")
+                        else:
+                            st.warning("Bài học này chưa được cấu hình Flashcard.")
+                            
                     with st.expander("✍️ Xem đề kiểm tra (15 câu)", expanded=False):
                         questions = json.loads(current_lesson['questions'])
                         st.info(f"Tổng số câu hỏi: {len(questions)} câu (10 trắc nghiệm, 5 tự luận)")
@@ -1352,11 +1476,85 @@ def show_student_interface(client):
                     unsafe_allow_html=True
                 )
                 
-            tab_lecture, tab_practice = st.tabs(["📖 Bài giảng lý thuyết (5 mục)", "✍️ Bài kiểm tra"])
+            tab_lecture, tab_flashcards, tab_practice = st.tabs([
+                "📖 Bài giảng lý thuyết (5 mục)", 
+                "🗂️ Thẻ Ghi Nhớ (15 Flashcards)", 
+                "✍️ Bài kiểm tra"
+            ])
             
             with tab_lecture:
                 st.markdown(lesson['lecture_content'])
                 
+            with tab_flashcards:
+                st.write("### 🗂️ Thẻ Ghi Nhớ Ôn Tập (15 Flashcards)")
+                st.write("Rê chuột (hoặc chạm tay trên điện thoại) lên thẻ để **lật ngược 3D** xem đáp án/giải thích!")
+                
+                flashcards_data = lesson.get('flashcards')
+                if not flashcards_data:
+                    st.info("Bài học này chưa được cấu hình Flashcard. Ba mẹ hãy dùng tính năng AI Soạn bài giảng mới để tự động cập nhật Flashcards.")
+                else:
+                    try:
+                        fc_list = json.loads(flashcards_data)
+                    except Exception:
+                        fc_list = []
+                        
+                    if len(fc_list) == 0:
+                        st.info("Không có Flashcard nào được tìm thấy cho bài học này.")
+                    else:
+                        # Lưu trữ vị trí thẻ đang chọn trong session state
+                        fc_key = f"fc_index_{lesson['id']}"
+                        if fc_key not in st.session_state:
+                            st.session_state[fc_key] = 0
+                            
+                        current_fc_idx = st.session_state[fc_key]
+                        # Giới hạn chỉ số hợp lệ
+                        current_fc_idx = max(0, min(current_fc_idx, len(fc_list) - 1))
+                        st.session_state[fc_key] = current_fc_idx
+                        
+                        fc = fc_list[current_fc_idx]
+                        
+                        # Vẽ thanh tiến trình
+                        progress_val = (current_fc_idx + 1) / len(fc_list)
+                        st.progress(progress_val)
+                        st.write(f"📝 **Thẻ {current_fc_idx + 1} trên {len(fc_list)}**")
+                        
+                        # Hiển thị thẻ lật 3D bằng HTML/CSS
+                        front_text = fc.get('front', '')
+                        back_text = fc.get('back', '')
+                        
+                        st.markdown(
+                            f"""
+                            <div class="flashcard-container">
+                                <div class="flip-card">
+                                    <div class="flip-card-inner">
+                                        <div class="flip-card-front">
+                                            <div class="flashcard-title">Mặt Trước (Câu hỏi / Từ mới)</div>
+                                            <div class="flashcard-content">{front_text}</div>
+                                            <div class="flashcard-hint">💡 Rê chuột/chạm tay để lật xem mặt sau</div>
+                                        </div>
+                                        <div class="flip-card-back">
+                                            <div class="flashcard-title" style="color: #64748b;">Mặt Sau (Lời giải / Giải thích)</div>
+                                            <div class="flashcard-content">{back_text}</div>
+                                            <div class="flashcard-hint" style="color: #94a3b8;">💡 Bôi đen chữ để nghe phát âm</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        
+                        # Nút điều hướng Carousel
+                        col_fc_prev, col_fc_space, col_fc_next = st.columns([1, 2, 1])
+                        with col_fc_prev:
+                            if st.button("⬅️ Thẻ Trước", use_container_width=True, disabled=(current_fc_idx == 0)):
+                                st.session_state[fc_key] = current_fc_idx - 1
+                                st.rerun()
+                        with col_fc_next:
+                            if st.button("Thẻ Kế ➡️", use_container_width=True, disabled=(current_fc_idx == len(fc_list) - 1)):
+                                st.session_state[fc_key] = current_fc_idx + 1
+                                st.rerun()
+            
             with tab_practice:
                 if grade_record:
                     st.info("Bạn đã làm bài kiểm tra này rồi. Bạn muốn xem lại phản hồi của AI hay làm lại bài?")

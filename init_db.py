@@ -62,10 +62,17 @@ def init_database():
         lecture_content TEXT NOT NULL,
         questions TEXT NOT NULL, -- JSON string của danh sách câu hỏi
         duration INTEGER NOT NULL, -- thời gian làm bài (phút)
+        flashcards TEXT, -- JSON string của 15 flashcards
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(subject, lesson_number)
     );
     """)
+
+    try:
+        cursor.execute("ALTER TABLE Lessons ADD COLUMN flashcards TEXT;")
+        print("Đã kiểm tra/thêm cột 'flashcards' vào bảng Lessons.")
+    except sqlite3.OperationalError:
+        pass
 
     # 4. Bảng Grades
     cursor.execute("""
