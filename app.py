@@ -995,82 +995,56 @@ def inject_selection_speak_js():
         width=0
     )
 
-def show_floating_chat():
-    if not st.session_state.get('logged_in', False):
+def show_sidebar_chat():
+    current_user = st.session_state.get('username')
+    if not current_user:
         return
-
-    current_user = st.session_state['username']
-    
-    # Khởi tạo trạng thái thu nhỏ/mở rộng chat
-    if 'chat_expanded' not in st.session_state:
-        st.session_state['chat_expanded'] = False
         
-    if not st.session_state['chat_expanded']:
-        # Bong bóng chat thu nhỏ (hình tròn)
-        with st.container():
-            st.markdown('<div class="floating-chat-collapsed"></div>', unsafe_allow_html=True)
-            if st.button("💬", key="btn_chat_collapsed", help="Chat Gia Đình"):
-                st.session_state['chat_expanded'] = True
-                st.rerun()
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("💬 **Trò Chuyện Gia Đình**")
+    
+    # Lấy 15 tin nhắn gần nhất
+    messages = get_messages(15)
+    
+    # Thiết kế HTML hộp chat cuộn trong sidebar
+    chat_html = '<div class="sidebar-chat-container" style="height: 220px; overflow-y: auto; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; background-color: #f8fafc; margin-bottom: 10px; display: flex; flex-direction: column;">'
+    if not messages:
+        chat_html += '<div style="color:#94a3b8; font-size:0.75rem; text-align:center; margin-top:90px;">Chưa có tin nhắn.</div>'
     else:
-        # Cửa sổ chat mở rộng
-        with st.container():
-            st.markdown('<div class="floating-chat-expanded"></div>', unsafe_allow_html=True)
+        for msg in messages:
+            sender_label = "Bạn" if msg['sender'] == current_user else ("Phụ huynh" if msg['sender'] == 'phuhuynh' else "Con")
+            bubble_style = "background: linear-gradient(135deg, #0284c7 0%, #3b82f6 100%); color: white; align-self: flex-end; margin-left: auto; border-bottom-right-radius: 2px;" if msg['sender'] == current_user else "background-color: #e2e8f0; color: #1e293b; align-self: flex-start; margin-right: auto; border-bottom-left-radius: 2px;"
             
-            # Tiêu đề & Nút đóng
-            col_title, col_close = st.columns([5, 1])
-            with col_title:
-                st.markdown("💬 **Chat Gia Đình**")
-            with col_close:
-                if st.button("❌", key="btn_chat_close", help="Thu nhỏ"):
-                    st.session_state['chat_expanded'] = False
-                    st.rerun()
+            try:
+                if isinstance(msg['created_at'], str):
+                    time_part = msg['created_at'].split()
+                    time_str = time_part[1][:5] if len(time_part) > 1 else msg['created_at'][:5]
+                else:
+                    time_str = msg['created_at'].strftime("%H:%M")
+            except Exception:
+                time_str = ""
+                
+            chat_html += f"""
+            <div style="margin-bottom: 8px; padding: 6px 10px; border-radius: 10px; font-size: 0.75rem; max-width: 85%; line-height: 1.3; {bubble_style}">
+                <div style="font-size:0.6rem; font-weight:700; opacity:0.85; margin-bottom:2px;">{sender_label}</div>
+                <div>{msg['message']}</div>
+                <div style="font-size:0.55rem; text-align:right; margin-top:2px; opacity:0.85;">{time_str}</div>
+            </div>
+            """
+    chat_html += '</div>'
+    st.sidebar.markdown(chat_html, unsafe_allow_html=True)
+    
+    # Form nhập tin nhắn trong sidebar
+    with st.sidebar.form("sidebar_chat_form", clear_on_submit=True):
+        col_inp, col_send = st.columns([3, 1])
+        with col_inp:
+            new_msg = st.text_input("Nhắn tin...", label_visibility="collapsed", placeholder="Nhập tin nhắn...", key="sidebar_chat_input")
+        with col_send:
+            btn_send = st.form_submit_button("Gửi")
             
-            # Lấy 25 tin nhắn gần nhất
-            messages = get_messages(25)
-            
-            # Giao diện hiển thị lịch sử tin nhắn dạng chat bong bóng
-            chat_html = '<div class="chat-history-container">'
-            if not messages:
-                chat_html += '<div style="color:#94a3b8; font-size:0.8rem; text-align:center; margin-top:150px;">Chưa có tin nhắn nào. Hãy gửi lời chào đầu tiên!</div>'
-            else:
-                for msg in messages:
-                    sender_label = "Bạn" if msg['sender'] == current_user else ("Phụ huynh" if msg['sender'] == 'phuhuynh' else "Con")
-                    bubble_class = "chat-bubble-self" if msg['sender'] == current_user else "chat-bubble-other"
-                    
-                    # Đọc thời gian
-                    try:
-                        # created_at có dạng YYYY-MM-DD HH:MM:SS hoặc ISO
-                        # Cố gắng bóc tách giờ phút
-                        if isinstance(msg['created_at'], str):
-                            time_part = msg['created_at'].split()
-                            time_str = time_part[1][:5] if len(time_part) > 1 else msg['created_at'][:5]
-                        else:
-                            time_str = msg['created_at'].strftime("%H:%M")
-                    except Exception:
-                        time_str = ""
-                        
-                    chat_html += f"""
-                    <div class="chat-bubble {bubble_class}">
-                        <div style="font-size:0.65rem; font-weight:700; opacity:0.85; margin-bottom:2px;">{sender_label}</div>
-                        <div>{msg['message']}</div>
-                        <div class="chat-meta">{time_str}</div>
-                    </div>
-                    """
-            chat_html += '</div>'
-            st.markdown(chat_html, unsafe_allow_html=True)
-            
-            # Nhập tin nhắn mới
-            with st.form("send_msg_form", clear_on_submit=True):
-                col_inp, col_send = st.columns([4, 1])
-                with col_inp:
-                    new_msg = st.text_input("Nhập tin nhắn...", label_visibility="collapsed", placeholder="Nhắn tin...")
-                with col_send:
-                    btn_send = st.form_submit_button("Gửi", use_container_width=True)
-                    
-                if btn_send and new_msg.strip():
-                    save_message(current_user, new_msg.strip())
-                    st.rerun()
+        if btn_send and new_msg.strip():
+            save_message(current_user, new_msg.strip())
+            st.rerun()
 
 def get_gemini_client():
     api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -2122,6 +2096,9 @@ def main():
     st.sidebar.markdown(f"<span class='badge {badge_style}'>{role_name}</span>", unsafe_allow_html=True)
     st.sidebar.write("---")
     
+    show_sidebar_chat()
+    st.sidebar.write("---")
+    
     if st.sidebar.button("Đăng Xuất 🚪", use_container_width=True):
         st.session_state['logged_in'] = False
         st.session_state['username'] = None
@@ -2138,8 +2115,6 @@ def main():
         show_parent_interface(client)
     else:
         show_student_interface(client)
-
-    show_floating_chat()
 
 
 if __name__ == '__main__':
