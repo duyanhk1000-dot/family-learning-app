@@ -678,6 +678,89 @@ def inject_custom_css():
         unsafe_allow_html=True
     )
 
+def inject_selection_speak_js():
+    # Sử dụng iframe Streamlit Component ẩn (height=0) để nhúng JavaScript lên trang cha
+    # Đoạn script này bắt sự kiện bôi đen (mouseup) để hiện nút loa đọc phát âm
+    st.components.v1.html(
+        """
+        <script>
+            (function() {
+                const parentDoc = window.parent.document;
+                
+                // Tránh tạo trùng lặp sự kiện khi Streamlit tự động chạy lại code (rerun)
+                if (window.parent.__selectionSpeakInitialized) return;
+                window.parent.__selectionSpeakInitialized = true;
+                
+                parentDoc.addEventListener('mouseup', function(e) {
+                    const selection = window.parent.getSelection().toString().trim();
+                    let button = parentDoc.getElementById('floating-speak-btn');
+                    
+                    if (selection.length > 0) {
+                        if (!button) {
+                            button = parentDoc.createElement('div');
+                            button.id = 'floating-speak-btn';
+                            button.innerHTML = '🔊 Đọc phát âm';
+                            button.style.position = 'absolute';
+                            button.style.background = 'linear-gradient(135deg, #0284c7 0%, #3b82f6 100%)';
+                            button.style.color = '#ffffff';
+                            button.style.padding = '6px 12px';
+                            button.style.borderRadius = '20px';
+                            button.style.cursor = 'pointer';
+                            button.style.fontSize = '12px';
+                            button.style.fontWeight = 'bold';
+                            button.style.boxShadow = '0 4px 10px rgba(0,0,0,0.15)';
+                            button.style.zIndex = '99999';
+                            button.style.transition = 'opacity 0.2s';
+                            parentDoc.body.appendChild(button);
+                        }
+                        
+                        // Đặt vị trí bong bóng nổi phía trên con trỏ chuột bôi đen
+                        button.style.left = (e.pageX - 20) + 'px';
+                        button.style.top = (e.pageY - 40) + 'px';
+                        button.style.display = 'block';
+                        button.style.opacity = '1';
+                        
+                        // Xử lý sự kiện click nút đọc phát âm
+                        button.onclick = function(event) {
+                            event.stopPropagation();
+                            
+                            const utterance = new window.parent.SpeechSynthesisUtterance(selection);
+                            
+                            // Kiểm tra tiếng Việt có dấu để điều chỉnh giọng đọc vi-VN, ngược lại chọn giọng Anh en-US
+                            const containsVietnamese = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(selection);
+                            if (containsVietnamese) {
+                                utterance.lang = 'vi-VN';
+                            } else {
+                                utterance.lang = 'en-US';
+                            }
+                            
+                            window.parent.speechSynthesis.speak(utterance);
+                            
+                            // Ẩn nút sau khi phát âm xong
+                            button.style.display = 'none';
+                            window.parent.getSelection().removeAllRanges();
+                        };
+                    } else {
+                        if (button) {
+                            button.style.display = 'none';
+                        }
+                    }
+                });
+                
+                // Ẩn nút khi click chuột xuống
+                parentDoc.addEventListener('mousedown', function(e) {
+                    const button = parentDoc.getElementById('floating-speak-btn');
+                    if (button && e.target !== button) {
+                        button.style.display = 'none';
+                    }
+                });
+            })();
+        </script>
+        """,
+        height=0,
+        width=0
+    )
+
 def get_gemini_client():
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -1586,6 +1669,7 @@ def show_exam_result_room():
 
 def main():
     inject_custom_css()
+    inject_selection_speak_js()
     
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
