@@ -153,6 +153,18 @@ def init_postgres_tables(conn):
             VALUES ('hocsinh', '123456', 'student')
             ON CONFLICT (username) DO NOTHING;
             """)
+            # Tự động dọn dẹp các dòng trùng lặp trong Lessons nếu có
+            try:
+                cursor.execute("""
+                DELETE FROM Lessons 
+                WHERE id NOT IN (
+                    SELECT MAX(id) 
+                    FROM Lessons 
+                    GROUP BY subject, lesson_number
+                );
+                """)
+            except Exception:
+                pass
         conn.commit()
     except Exception as e:
         print(f"Lỗi khởi tạo Supabase PostgreSQL: {e}")
@@ -218,6 +230,20 @@ def init_sqlite_tables(conn):
         """)
         cursor.execute("INSERT OR IGNORE INTO Users (username, password, role) VALUES ('phuhuynh', '123456', 'parent');")
         cursor.execute("INSERT OR IGNORE INTO Users (username, password, role) VALUES ('hocsinh', '123456', 'student');")
+        
+        # Tự động dọn dẹp các dòng trùng lặp trong Lessons nếu có
+        try:
+            cursor.execute("""
+            DELETE FROM Lessons 
+            WHERE id NOT IN (
+                SELECT MAX(id) 
+                FROM Lessons 
+                GROUP BY subject, lesson_number
+            );
+            """)
+        except Exception:
+            pass
+            
         conn.commit()
     except Exception as e:
         print(f"Lỗi khởi tạo SQLite: {e}")
@@ -356,6 +382,38 @@ def get_db():
     conn.execute("PRAGMA foreign_keys = ON;")
     init_sqlite_tables(conn)
     return SQLiteWrapper(conn)
+
+def reset_active_database():
+    try:
+        db_url = None
+        if st.secrets and "DATABASE_URL" in st.secrets:
+            db_url = st.secrets["DATABASE_URL"]
+        elif "DATABASE_URL" in os.environ:
+            db_url = os.environ["DATABASE_URL"]
+            
+        if db_url and HAS_POSTGRES:
+            with psycopg2.connect(db_url) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("DROP TABLE IF EXISTS Grades CASCADE;")
+                    cursor.execute("DROP TABLE IF EXISTS Lessons CASCADE;")
+                    cursor.execute("DROP TABLE IF EXISTS Syllabus CASCADE;")
+                    cursor.execute("DROP TABLE IF EXISTS Users CASCADE;")
+                    cursor.execute("DROP TABLE IF EXISTS Messages CASCADE;")
+                conn.commit()
+                # Re-initialize
+                init_postgres_tables(conn)
+            return True
+            
+        # SQLite reset
+        if os.path.exists(DB_FILE):
+            os.remove(DB_FILE)
+        conn = sqlite3.connect(DB_FILE)
+        init_sqlite_tables(conn)
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Lỗi khi reset cơ sở dữ liệu: {e}")
+        return False
 
 def verify_user(username, password):
     try:
@@ -1708,6 +1766,15 @@ def show_parent_interface(client):
                             st.rerun()
                         except Exception as e:
                             st.error(f"Lỗi khi xóa bài giảng: {e}")
+                            
+        st.write("---")
+        st.write("### ⚠️ Khu Vực Nguy Hiểm")
+        st.warning("Khởi tạo lại cơ sở dữ liệu sẽ xóa sạch toàn bộ lộ trình, bài giảng, điểm số và tin nhắn. Hành động này không thể hoàn tác!")
+        if st.button("Xóa Sạch Dữ Liệu & Làm Lại Từ Đầu 🔄", key="reset_db_button", use_container_width=True):
+            if reset_active_database():
+                st.success("Đã xóa sạch cơ sở dữ liệu thành công! Vui lòng đăng nhập lại.")
+                st.session_state.clear()
+                st.rerun()
 
 
 # --- GIAO DIỆN HỌC SINH ---
