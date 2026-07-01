@@ -2088,7 +2088,6 @@ def show_exam_taking_room(client):
 
     st.markdown(f"## 📝 Bài Kiểm Tra: Buổi {lesson['lesson_number']} - {lesson['title']}")
     
-    end_time_iso = end_time.isoformat()
     with st.sidebar:
         st.components.v1.html(
             f"""
@@ -2098,12 +2097,10 @@ def show_exam_taking_room(client):
             </div>
             <script>
                 (function() {{
-                    const endTime = new Date("{end_time_iso}").getTime();
-                    const timerInterval = setInterval(function() {{
-                        const now = new Date().getTime();
-                        const distance = endTime - now;
-                        
-                        if (distance <= 0) {{
+                    let secondsLeft = {remaining_seconds};
+                    
+                    function updateDisplay() {{
+                        if (secondsLeft <= 0) {{
                             clearInterval(timerInterval);
                             const clock = document.getElementById("visual-timer");
                             if (clock) {{
@@ -2124,8 +2121,8 @@ def show_exam_taking_room(client):
                                 console.log("Iframe sandbox block access:", e);
                             }}
                         }} else {{
-                            const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
-                            const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+                            const minutes = Math.floor(secondsLeft / 60);
+                            const seconds = secondsLeft % 60;
                             const displayMin = minutes < 10 ? "0" + minutes : minutes;
                             const displaySec = seconds < 10 ? "0" + seconds : seconds;
                             const clock = document.getElementById("visual-timer");
@@ -2133,15 +2130,29 @@ def show_exam_taking_room(client):
                                 clock.innerHTML = displayMin + ":" + displaySec;
                                 if (minutes < 2) {{
                                     clock.style.color = "#f59e0b";
+                                    clock.style.animation = "blink 1s infinite";
                                 }}
                                 if (minutes < 1 && seconds < 30) {{
                                     clock.style.color = "#ef4444";
                                 }}
                             }}
                         }}
+                    }}
+                    
+                    // Chạy hiển thị ngay lập tức
+                    updateDisplay();
+                    
+                    const timerInterval = setInterval(function() {{
+                        secondsLeft--;
+                        updateDisplay();
                     }}, 1000);
                 }})();
             </script>
+            <style>
+                @keyframes blink {{
+                    50% {{ opacity: 0.6; }}
+                }}
+            </style>
             """,
             height=150
         )
