@@ -2407,8 +2407,8 @@ def main():
     st.sidebar.markdown(f"<span class='badge {badge_style}'>{role_name}</span>", unsafe_allow_html=True)
     st.sidebar.write("---")
     
-    show_sidebar_chat()
-    st.sidebar.write("---")
+    # show_sidebar_chat()
+    # st.sidebar.write("---")
     
     if st.sidebar.button("Đăng Xuất 🚪", use_container_width=True):
         st.session_state['logged_in'] = False
