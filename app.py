@@ -1141,7 +1141,7 @@ def generate_content_with_retry(client, model, contents, config=None, max_retrie
 def show_parent_interface(client):
     st.markdown("<h1>Không Gian <span class='parent-gradient-text'>Phụ Huynh</span> <span class='badge badge-parent'>Parent Portal</span></h1>", unsafe_allow_html=True)
     
-    tab1, tab2, tab3 = st.tabs(["🗺️ Lộ Trình Học Tập", "📝 Soạn Giáo Án & Đề Thi", "📊 Giám Sát Kết Quả"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🗺️ Lộ Trình Học Tập", "📝 Soạn Giáo Án & Đề Thi", "📊 Giám Sát Kết Quả", "⚙️ Quản Lý Dữ Liệu"])
     
     # TAB 1: QUẢN LÝ LỘ TRÌNH VÀ TẢI PDF
     with tab1:
@@ -1637,6 +1637,78 @@ def show_parent_interface(client):
                         st.markdown(f"🤖 **AI Giải thích & Nhận xét:** {q_fb.get('correct_explanation', '')}")
                     st.write("---")
 
+    # TAB 4: QUẢN LÝ DỮ LIỆU
+    with tab4:
+        st.subheader("⚙️ Quản lý Cơ sở dữ liệu học tập")
+        st.write("Ba mẹ có thể theo dõi danh sách các môn học, số bài giảng đã soạn và xóa các dữ liệu bị nhầm lẫn tại đây.")
+        
+        # 1. Quản lý Lộ trình (Syllabus)
+        st.write("### 🗺️ Danh sách Lộ trình học tập")
+        try:
+            with get_db() as conn:
+                syllabus_rows = conn.execute("SELECT id, subject, total_lessons FROM Syllabus ORDER BY subject ASC").fetchall()
+                syllabus_list = [dict(r) for r in syllabus_rows]
+        except Exception as e:
+            st.error(f"Lỗi tải lộ trình: {e}")
+            syllabus_list = []
+            
+        if not syllabus_list:
+            st.info("Chưa có môn học nào được tạo lộ trình.")
+        else:
+            for s in syllabus_list:
+                col_sub, col_tot, col_del = st.columns([3, 1, 1])
+                with col_sub:
+                    st.write(f"📚 **{s['subject']}**")
+                with col_tot:
+                    st.write(f"⏱️ Tổng số: {s['total_lessons']} buổi")
+                with col_del:
+                    if st.button("Xóa môn ❌", key=f"del_sub_{s['id']}"):
+                        try:
+                            with get_db() as conn:
+                                # Xóa Syllabus
+                                conn.execute("DELETE FROM Syllabus WHERE subject = ?", (s['subject'],))
+                                # Xóa Lessons liên quan
+                                conn.execute("DELETE FROM Lessons WHERE subject = ?", (s['subject'],))
+                                conn.commit()
+                            st.success(f"Đã xóa môn học '{s['subject']}' và toàn bộ bài giảng liên quan!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Lỗi khi xóa môn học: {e}")
+                            
+        st.write("---")
+        
+        # 2. Quản lý Bài giảng (Lessons)
+        st.write("### 📝 Danh sách bài giảng đã soạn thảo")
+        try:
+            with get_db() as conn:
+                lessons_rows = conn.execute("SELECT id, subject, lesson_number, title FROM Lessons ORDER BY subject ASC, lesson_number ASC").fetchall()
+                lessons_list = [dict(r) for r in lessons_rows]
+        except Exception as e:
+            st.error(f"Lỗi tải bài giảng: {e}")
+            lessons_list = []
+            
+        if not lessons_list:
+            st.info("Chưa có bài giảng nào được soạn thảo.")
+        else:
+            for l in lessons_list:
+                col_sub_l, col_num, col_title_l, col_del_l = st.columns([2, 1, 3, 1])
+                with col_sub_l:
+                    st.write(f"📖 {l['subject']}")
+                with col_num:
+                    st.write(f"Buổi {l['lesson_number']}")
+                with col_title_l:
+                    st.write(l['title'])
+                with col_del_l:
+                    if st.button("Xóa bài 🗑️", key=f"del_les_{l['id']}"):
+                        try:
+                            with get_db() as conn:
+                                conn.execute("DELETE FROM Lessons WHERE id = ?", (l['id'],))
+                                conn.commit()
+                            st.success(f"Đã xóa bài giảng Buổi {l['lesson_number']} của môn '{l['subject']}'!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Lỗi khi xóa bài giảng: {e}")
+
 
 # --- GIAO DIỆN HỌC SINH ---
 
@@ -1666,7 +1738,7 @@ def show_student_interface(client):
     
     with col_sel:
         st.write("### 📚 Chọn bài học")
-        selected_subject = st.selectbox("Chọn môn học:", subjects)
+        selected_subject = st.selectbox("Chọn môn học:", subjects, key="student_subject_select")
         
         lessons = get_lessons_for_subject(selected_subject)
         
@@ -1675,7 +1747,8 @@ def show_student_interface(client):
             selected_lesson_num = None
         else:
             lesson_options = [f"Buổi {l['lesson_number']}: {l['title']}" for l in lessons]
-            selected_lesson_str = st.selectbox("Chọn buổi học:", lesson_options)
+            # Sử dụng key phụ thuộc vào selected_subject để buộc Streamlit reset trạng thái khi chuyển môn học
+            selected_lesson_str = st.selectbox("Chọn buổi học:", lesson_options, key=f"student_lesson_select_{selected_subject}")
             selected_lesson_num = lessons[lesson_options.index(selected_lesson_str)]['lesson_number']
             
     with col_main:
