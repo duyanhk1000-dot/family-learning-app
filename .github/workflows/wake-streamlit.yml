@@ -1,0 +1,47 @@
+name: Keep Streamlit Awake
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping Streamlit App
+        run: |
+          # Lấy URL từ Secrets, nếu không cấu hình sẽ mặc định dùng URL của repository
+          URL="${{ secrets.STREAMLIT_APP_URL || 'https://family-learning-app.streamlit.app/' }}"
+          echo "=========================================================="
+          echo "🚀 Bắt đầu ping ứng dụng Streamlit để giữ kết nối hoạt động"
+          echo "🌐 URL mục tiêu: $URL"
+          echo "=========================================================="
+          
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          SUCCESS=false
+          
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "👉 Lần thử thứ $ATTEMPT / $MAX_ATTEMPTS..."
+            # -L: đi theo redirect, -s: không hiện thanh tiến trình, -f: báo lỗi nếu HTTP code >= 400
+            # Giới hạn thời gian kết nối mỗi lần curl tối đa là 30 giây
+            if curl -L -s -f --max-time 30 "$URL" > /dev/null; then
+              echo "✅ Ping thành công! Ứng dụng đã được đánh thức và hoạt động bình thường."
+              SUCCESS=true
+              break
+            else
+              echo "⚠️ Lần thử thứ $ATTEMPT thất bại (HTTP code lỗi hoặc không thể kết nối)!"
+              if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+                echo "Đợi 15 giây trước khi thử lại..."
+                sleep 15
+              fi
+            fi
+            ATTEMPT=$((ATTEMPT+1))
+          done
+          
+          if [ "$SUCCESS" = false ]; then
+            echo "❌ Đã thử ping $MAX_ATTEMPTS lần nhưng đều thất bại!"
+            exit 1
+          fi
