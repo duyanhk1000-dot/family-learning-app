@@ -1302,7 +1302,68 @@ def show_parent_interface(client):
             if st.session_state['show_approval']:
                 st.warning("⚠️ LỘ TRÌNH ĐANG ĐƯỢC ĐỀ XUẤT. PHỤ HUYNH CẦN PHÊ DUYỆT ĐỂ LƯU VÀO LỊCH HỌC TẬP.")
                 st.markdown(st.session_state['temp_syllabus_content'])
+                st.write("---")
+                st.write("### 🛠️ Góp ý điều chỉnh lộ trình")
+                feedback = st.text_area(
+                    "Nhập những điểm cần sửa đổi, thêm bớt (AI sẽ thiết kế lại lộ trình học dựa trên ý kiến này):", 
+                    placeholder="Ví dụ: Rút ngắn lộ trình còn 20 buổi học; tập trung nhiều hơn vào bài tập thực hành; hoặc thêm 1 buổi ôn tập chương ở bài số 10...",
+                    key="syllabus_feedback_text"
+                )
                 
+                if st.button("AI Điều Chỉnh Lộ Trình Lại 🔄", use_container_width=True):
+                    if not feedback.strip():
+                        st.error("Vui lòng nhập nội dung cần điều chỉnh!")
+                    else:
+                        with st.spinner("AI đang điều chỉnh lại lộ trình học dựa trên ý kiến của bạn..."):
+                            try:
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                                    temp_file.write(st.session_state['temp_pdf_bytes'])
+                                    temp_file_path = temp_file.name
+                                    
+                                file_ref = client.files.upload(file=temp_file_path)
+                                while file_ref.state.name == "PROCESSING":
+                                    time.sleep(1)
+                                    file_ref = client.files.get(name=file_ref.name)
+                                    
+                                if file_ref.state.name == "FAILED":
+                                    st.error("Gemini không thể xử lý tệp PDF để điều chỉnh!")
+                                    os.unlink(temp_file_path)
+                                else:
+                                    prompt = f"""
+                                    Bạn là một chuyên gia thiết kế chương trình học. Trước đó bạn đã đề xuất một lộ trình học tập cho môn học: {st.session_state['temp_syllabus_subject']}.
+                                    
+                                    Lộ trình đề xuất trước đó:
+                                    {st.session_state['temp_syllabus_content']}
+                                    
+                                    Phụ huynh đã xem lộ trình trên và đưa ra yêu cầu điều chỉnh, bổ sung như sau:
+                                    "{feedback}"
+                                    
+                                    Hãy phân tích tệp PDF sách giáo khoa đính kèm cùng với ý kiến đóng góp của phụ huynh để thiết kế lại một lộ trình học tập khoa học, logic chia theo từng buổi học. 
+                                    Đáp ứng chính xác và đầy đủ các yêu cầu điều chỉnh của phụ huynh (ví dụ: rút ngắn số buổi học, thêm bớt bài, tập trung trọng tâm...).
+                                    
+                                    Mỗi buổi học phải nêu rõ:
+                                    1. Tên buổi (Ví dụ: Buổi 1: Tập hợp và các phần tử của tập hợp)
+                                    2. Mục tiêu kiến thức cần đạt
+                                    3. Các khái niệm cốt lõi (sử dụng định dạng LaTeX cho các công thức)
+                                    
+                                    Trình bày dưới dạng Markdown đẹp mắt, khoa học, dễ đọc.
+                                    """
+                                    response = generate_content_with_retry(
+                                        client,
+                                        model='gemini-2.5-flash',
+                                        contents=[file_ref, prompt]
+                                    )
+                                    st.session_state['temp_syllabus_content'] = response.text
+                                    
+                                    client.files.delete(name=file_ref.name)
+                                    os.unlink(temp_file_path)
+                                    st.success("Đã điều chỉnh lộ trình thành công! Xem lại lộ trình mới ở phía trên.")
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"Lỗi khi AI điều chỉnh lộ trình: {e}")
+                                if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+                                    os.unlink(temp_file_path)
+                                    
                 st.write("---")
                 # Cho phép phụ huynh tùy chỉnh tổng số buổi học trước khi phê duyệt
                 total_lessons = st.number_input("Chốt tổng số buổi học cho lộ trình này (Ví dụ: 39):", min_value=1, max_value=150, value=30, step=1)
