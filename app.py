@@ -1077,6 +1077,22 @@ def show_sidebar_chat():
                 
                 setInterval(function() {
                     const parentDoc = window.parent.document;
+                    
+                    // Kiểm tra xem người dùng có đang gõ chữ hoặc chọn/tương tác với bất kỳ ô nhập liệu nào không
+                    const activeEl = parentDoc.activeElement;
+                    const isInteracting = activeEl && (
+                        activeEl.tagName === 'INPUT' || 
+                        activeEl.tagName === 'TEXTAREA' || 
+                        activeEl.tagName === 'SELECT' ||
+                        activeEl.getAttribute('role') === 'combobox' ||
+                        activeEl.getAttribute('role') === 'textbox' ||
+                        activeEl.getAttribute('contenteditable') === 'true'
+                    );
+                    
+                    if (isInteracting) {
+                        return; // Bỏ qua tự động làm mới để tránh mất tiêu điểm và mất chữ khi đang gõ/chọn
+                    }
+                    
                     const buttons = parentDoc.querySelectorAll('button');
                     for (let btn of buttons) {
                         if (btn.title === "Cập nhật tin nhắn" || (btn.innerText && btn.innerText.includes("🔄"))) {
