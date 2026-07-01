@@ -13,7 +13,7 @@ jobs:
       - name: Ping Streamlit App
         run: |
           # Lấy URL từ Secrets, nếu không cấu hình sẽ mặc định dùng URL của repository
-          URL="${{ secrets.STREAMLIT_APP_URL || 'https://https://cuu-hoc-bai.streamlit.app/' }}"
+          URL="${{ secrets.STREAMLIT_APP_URL || 'https://cuu-hoc-bai.streamlit.app/' }}"
           echo "=========================================================="
           echo "🚀 Bắt đầu ping ứng dụng Streamlit để giữ kết nối hoạt động"
           echo "🌐 URL mục tiêu: $URL"
