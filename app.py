@@ -1242,9 +1242,9 @@ def show_parent_interface(client):
             subject_mode = st.radio("Chọn hình thức môn học:", ["Chọn môn học đã có", "Thêm môn học mới"])
             
             if subject_mode == "Chọn môn học đã có" and existing_subjects:
-                selected_subject = st.selectbox("Môn học có sẵn:", existing_subjects)
+                selected_subject = st.selectbox("Môn học có sẵn:", existing_subjects, key="parent_existing_subject_select")
             else:
-                selected_subject = st.text_input("Tên môn học mới:", placeholder="Ví dụ: Toán lớp 6, Tiếng Anh lớp 6...")
+                selected_subject = st.text_input("Tên môn học mới:", placeholder="Ví dụ: Toán lớp 6, Tiếng Anh lớp 6...", key="parent_new_subject_input")
             
             uploaded_pdf = st.file_uploader("Tải tệp sách giáo khoa lên (PDF):", type=["pdf"])
             
@@ -1462,7 +1462,7 @@ def show_parent_interface(client):
                 
                 # Dropdown chọn buổi theo danh sách từ 1 đến total_lessons
                 lesson_options = list(range(1, total_lessons + 1))
-                lesson_number = st.selectbox("Chọn buổi cần soạn giáo án:", options=lesson_options)
+                lesson_number = st.selectbox("Chọn buổi cần soạn giáo án:", options=lesson_options, key=f"parent_lesson_num_select_{selected_sub_lesson}")
                 
                 btn_create_lesson = st.button("AI Soạn Giáo Án & Đề Thi ✏️", use_container_width=True)
                 
