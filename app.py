@@ -1166,22 +1166,24 @@ def get_gemini_client():
     if "gemini_api_key" not in st.session_state:
         st.session_state["gemini_api_key"] = os.environ.get("GEMINI_API_KEY", "")
         
-    # Luôn hiển thị hộp cấu hình API Key trong Sidebar dưới dạng Expander để người dùng dễ dàng chỉnh sửa/thêm key dự phòng
-    with st.sidebar.expander("🔑 Cấu hình Gemini API Key", expanded=False):
-        entered_key = st.text_input(
-            "Nhập API Key (nhiều key cách nhau bằng dấu phẩy):", 
-            value=st.session_state["gemini_api_key"], 
-            type="password",
-            help="Ví dụ: Key1, Key2, Key3..."
-        )
-        if entered_key != st.session_state["gemini_api_key"]:
-            st.session_state["gemini_api_key"] = entered_key
-            st.rerun()
+    # Chỉ hiển thị hộp cấu hình API Key đối với tài khoản vai trò là Phụ huynh
+    if st.session_state.get('role') == 'parent':
+        with st.sidebar.expander("🔑 Cấu hình Gemini API Key", expanded=False):
+            entered_key = st.text_input(
+                "Nhập API Key (nhiều key cách nhau bằng dấu phẩy):", 
+                value=st.session_state["gemini_api_key"], 
+                type="password",
+                help="Ví dụ: Key1, Key2, Key3..."
+            )
+            if entered_key != st.session_state["gemini_api_key"]:
+                st.session_state["gemini_api_key"] = entered_key
+                st.rerun()
             
     api_key = st.session_state["gemini_api_key"]
     
     if not api_key:
-        st.sidebar.warning("⚠️ Chưa cấu hình Gemini API Key! Vui lòng mở rộng hộp '🔑 Cấu hình Gemini API Key' ở trên để nhập key.")
+        if st.session_state.get('role') == 'parent':
+            st.sidebar.warning("⚠️ Chưa cấu hình Gemini API Key! Vui lòng mở rộng hộp '🔑 Cấu hình Gemini API Key' ở trên để nhập key.")
         return None
         
     try:
@@ -1524,28 +1526,20 @@ def show_parent_interface(client):
                             Hãy biên soạn theo các tiêu chí nghiêm ngặt sau:
 
                             A. Yêu cầu chi tiết về BÀI GIẢNG (lecture_content):
-                            Phải viết đầy đủ nội dung bài giảng chi tiết, dễ hiểu cho học sinh lớp 6, trình bày Markdown đẹp mắt và chia cấu trúc đúng 5 phần sau:
+                            Phải viết đầy đủ nội dung bài giảng chi tiết, dễ hiểu cho học sinh lớp 6, trình bày Markdown đẹp mắt và chia cấu trúc đúng 3 phần chính sau:
                             1. Mục tiêu bài học (Learning Objectives):
                                - Kiến thức: Người học hiểu và nhớ được những gì?
                                - Kỹ năng: Người học thực hiện được thao tác hoặc giải quyết vấn đề gì?
                                - Thái độ: Sự thay đổi trong tư duy, nhận thức của người học sau bài học.
-                            2. Cấu trúc bài giảng (Lesson Plan):
-                               - Khởi động: Gây sự chú ý, kết nối kiến thức cũ với kiến thức mới.
-                               - Hình thành kiến thức: Trình bày lý thuyết trọng tâm kết hợp ví dụ minh họa trực quan (Toán học sử dụng công thức LaTeX $...$ hoặc $$...$$).
-                               - Luyện tập: Bài tập thực hành, câu hỏi thảo luận để củng cố kiến thức.
-                               - Vận dụng/Mở rộng: Hướng dẫn cách áp dụng kiến thức vào thực tiễn cuộc sống.
-                               - Tổng kết: Tóm tắt các ý chính và dặn dò.
-                            3. Phương pháp truyền đạt & Tương tác:
-                               - Tính tương tác: Gợi ý các câu hỏi gợi mở, thảo luận hoặc hoạt động nhanh.
-                               - Đa dạng hóa phương tiện: Cách kết hợp slide trình chiếu, giọng nói nhấn nhá, bảng viết.
-                               - Ví dụ thực tế: Tình huống thực tiễn sinh động.
-                            4. Công cụ hỗ trợ:
-                               - Slide trình chiếu: Bản phác thảo slide ngắn gọn, súc tích (quy tắc 6x6: không quá 6 dòng/slide, 6 chữ/dòng), sử dụng hình ảnh minh họa.
-                               - Thiết bị: Máy chiếu, bảng viết, micro hoặc thiết bị trực tuyến.
-                            5. Đánh giá và Phản hồi:
-                               - Đánh giá quá trình: Đưa ra câu hỏi nhanh trong bài.
-                               - Đánh giá tổng kết: Nhắc nhở con làm bài kiểm tra cuối giờ.
-                               - Phản hồi: Cách lắng nghe ý kiến đóng góp của con.
+                            2. Bài giảng E-learning (Lesson Plan):
+                               - Lý thuyết trọng tâm: Trình bày lý thuyết ngắn gọn, cô đọng, dễ hiểu, ưu tiên sử dụng từ khóa cốt lõi (sử dụng công thức LaTeX $...$ hoặc $$...$$ nếu có).
+                               - Minh họa thực tế (Ví dụ): Đưa ra case-study, ví dụ minh họa trực quan hoặc các tình huống áp dụng cụ thể trong thực tế.
+                               - Tương tác/Thực hành: Đan xen các câu hỏi, bài tập nhỏ cụ thể để học sinh tự suy nghĩ và trả lời ngay lập tức, kèm theo đáp án (Trả lời) và giải thích chi tiết.
+                            3. Tổng kết & Vận dụng:
+                               - Tóm tắt (Summary): Nhấn mạnh từ 3 đến 5 điểm chính cốt lõi nhất của bài học.
+                               - Kiểm tra cô đọng: Kiểm tra mức độ hiểu bài của học sinh bằng các câu hỏi nhanh cực kỳ ngắn gọn.
+                               - Giao nhiệm vụ (Call to Action): Hướng dẫn học sinh cách tự ứng dụng kiến thức vào thực tế cuộc sống hoặc chuẩn bị nội dung cho bài tiếp theo.
+
 
                             B. Yêu cầu chi tiết về ĐỀ KIỂM TRA (questions):
                             Thiết kế bộ đề kiểm tra cuối buổi gồm ĐÚNG 15 câu hỏi bám sát nội dung sách giáo khoa:
