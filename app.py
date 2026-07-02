@@ -2026,9 +2026,23 @@ def show_student_interface(client):
         syllabus_data = get_syllabus_with_textbook(selected_subject)
         if syllabus_data and syllabus_data.get('pdf_file_path'):
             pdf_path = syllabus_data['pdf_file_path']
+            
+            target_url = ""
             if pdf_path.startswith("http://") or pdf_path.startswith("https://"):
-                st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-                st.link_button("📖 Mở Sách Giáo Khoa (PDF)", pdf_path, use_container_width=True)
+                target_url = pdf_path
+            else:
+                # Nếu là đường dẫn cục bộ cũ (ví dụ: data/textbooks/abc.pdf), chuyển thành link public trên Supabase Storage
+                import os
+                basename = os.path.basename(pdf_path)
+                if basename:
+                    supabase_url = "https://ubaupchqavybpjpxjmle.supabase.co"
+                    if st.secrets and "SUPABASE_URL" in st.secrets:
+                        supabase_url = st.secrets["SUPABASE_URL"].strip().rstrip('/')
+                    target_url = f"{supabase_url}/storage/v1/object/public/textbooks/{basename}"
+            
+            if target_url:
+                st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
+                st.link_button("📖 Xem Sách Giáo Khoa (PDF)", target_url, use_container_width=True)
             
     with col_main:
         if selected_lesson_num:
