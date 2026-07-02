@@ -2154,85 +2154,257 @@ def show_student_interface(client):
                     if len(fc_list) == 0:
                         st.info("Không có Flashcard nào được tìm thấy cho bài học này.")
                     else:
-                        # Lưu trữ vị trí thẻ đang chọn trong session state
-                        fc_key = f"fc_index_{lesson['id']}"
-                        if fc_key not in st.session_state:
-                            st.session_state[fc_key] = 0
+                        import json
+                        fc_json = json.dumps(fc_list, ensure_ascii=False)
+                        
+                        html_carousel = f"""
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <meta charset="utf-8">
+                            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+                            <script>
+                                window.MathJax = {{
+                                    tex: {{
+                                        inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+                                        displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']]
+                                    }},
+                                    options: {{
+                                        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+                                    }}
+                                }};
+                            </script>
+                            <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+                            <style>
+                                body {{
+                                    font-family: 'Inter', sans-serif !important;
+                                    background: transparent !important;
+                                    margin: 0;
+                                    padding: 10px;
+                                    display: flex;
+                                    flex-direction: column;
+                                    align-items: center;
+                                    overflow: hidden;
+                                }}
+                                .progress-container {{
+                                    width: 480px;
+                                    height: 6px;
+                                    background-color: #e2e8f0;
+                                    border-radius: 9999px;
+                                    margin-bottom: 8px;
+                                    overflow: hidden;
+                                }}
+                                .progress-bar {{
+                                    height: 100%;
+                                    background: linear-gradient(135deg, #0284c7 0%, #3b82f6 100%);
+                                    width: 0%;
+                                    transition: width 0.3s ease;
+                                }}
+                                .progress-text {{
+                                    font-size: 0.85rem;
+                                    color: #475569;
+                                    font-weight: 500;
+                                    margin-bottom: 12px;
+                                    text-align: center;
+                                }}
+                                .flashcard-container {{
+                                    display: flex;
+                                    justify-content: center;
+                                    align-items: center;
+                                    margin-bottom: 20px;
+                                    perspective: 1000px;
+                                }}
+                                .flip-card {{
+                                    background-color: transparent;
+                                    width: 480px;
+                                    height: 280px;
+                                    perspective: 1000px;
+                                    cursor: pointer;
+                                }}
+                                .flip-card-inner {{
+                                    position: relative;
+                                    width: 100%;
+                                    height: 100%;
+                                    text-align: center;
+                                    transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+                                    transform-style: preserve-3d;
+                                    box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);
+                                    border-radius: 16px;
+                                }}
+                                .flip-card.flipped .flip-card-inner {{
+                                    transform: rotateY(180deg);
+                                }}
+                                .flip-card-front, .flip-card-back {{
+                                    position: absolute;
+                                    width: 100%;
+                                    height: 100%;
+                                    -webkit-backface-visibility: hidden;
+                                    backface-visibility: hidden;
+                                    border-radius: 16px;
+                                    display: flex;
+                                    flex-direction: column;
+                                    align-items: center;
+                                    justify-content: center;
+                                    padding: 30px;
+                                    box-sizing: border-box;
+                                }}
+                                .flip-card-front {{
+                                    background: linear-gradient(135deg, #0284c7 0%, #3b82f6 100%);
+                                    color: #ffffff;
+                                }}
+                                .flip-card-back {{
+                                    background-color: #ffffff;
+                                    color: #1e293b;
+                                    border: 2px solid #e2e8f0;
+                                    transform: rotateY(180deg);
+                                }}
+                                .flashcard-title {{
+                                    font-size: 0.85rem;
+                                    text-transform: uppercase;
+                                    letter-spacing: 0.1em;
+                                    margin-bottom: 12px;
+                                    opacity: 0.8;
+                                    font-weight: 700;
+                                }}
+                                .flashcard-content {{
+                                    font-size: 1.45rem;
+                                    font-weight: 600;
+                                    line-height: 1.4;
+                                }}
+                                .flip-card-back .flashcard-content,
+                                .flip-card-back .flashcard-content * {{
+                                    color: #1e293b !important;
+                                }}
+                                .flashcard-hint {{
+                                    font-size: 0.8rem;
+                                    margin-top: 20px;
+                                    opacity: 0.7;
+                                    font-style: italic;
+                                }}
+                                .nav-container {{
+                                    display: flex;
+                                    gap: 20px;
+                                    width: 480px;
+                                }}
+                                .nav-container button {{
+                                    flex: 1;
+                                    padding: 10px;
+                                    border-radius: 8px;
+                                    border: 1px solid #e2e8f0;
+                                    background-color: #ffffff;
+                                    color: #0f172a;
+                                    font-weight: 600;
+                                    font-size: 0.9rem;
+                                    cursor: pointer;
+                                    transition: all 0.2s ease;
+                                    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+                                }}
+                                .nav-container button:hover:not(:disabled) {{
+                                    background-color: #f8fafc;
+                                    border-color: #cbd5e1;
+                                }}
+                                .nav-container button:disabled {{
+                                    opacity: 0.5;
+                                    cursor: not-allowed;
+                                }}
+                            </style>
+                        </head>
+                        <body>
+                            <div class="progress-container">
+                                <div class="progress-bar" id="progressBar"></div>
+                            </div>
+                            <div class="progress-text" id="progressText">Thẻ 1 trên 15</div>
                             
-                        current_fc_idx = st.session_state[fc_key]
-                        # Giới hạn chỉ số hợp lệ
-                        current_fc_idx = max(0, min(current_fc_idx, len(fc_list) - 1))
-                        st.session_state[fc_key] = current_fc_idx
-                        
-                        fc = fc_list[current_fc_idx]
-                        
-                        # Vẽ thanh tiến trình
-                        progress_val = (current_fc_idx + 1) / len(fc_list)
-                        st.progress(progress_val)
-                        st.write(f"📝 **Thẻ {current_fc_idx + 1} trên {len(fc_list)}**")
-                        
-                        # Hiển thị thẻ lật 3D bằng HTML/CSS
-                        front_text = fc.get('front', '')
-                        back_text = fc.get('back', '')
-                        
-                        st.markdown(
-                            f"""
                             <div class="flashcard-container">
-                                <div class="flip-card">
+                                <div class="flip-card" id="flipCard" onclick="this.classList.toggle('flipped')">
                                     <div class="flip-card-inner">
                                         <div class="flip-card-front">
                                             <div class="flashcard-title">Mặt Trước (Câu hỏi / Từ mới)</div>
-                                            <div class="flashcard-content">{front_text}</div>
-                                            <div class="flashcard-hint">💡 Rê chuột/chạm tay để lật xem mặt sau</div>
+                                            <div class="flashcard-content" id="frontContent"></div>
+                                            <div class="flashcard-hint">💡 Nhấp chuột/chạm tay để lật mặt sau</div>
                                         </div>
                                         <div class="flip-card-back">
                                             <div class="flashcard-title" style="color: #64748b;">Mặt Sau (Lời giải / Giải thích)</div>
-                                            <div class="flashcard-content">{back_text}</div>
+                                            <div class="flashcard-content" id="backContent"></div>
                                             <div class="flashcard-hint" style="color: #94a3b8;">💡 Bôi đen chữ để nghe phát âm</div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
                             
+                            <div class="nav-container">
+                                <button id="prevBtn" onclick="prevCard()">⬅️ Thẻ Trước</button>
+                                <button id="nextBtn" onclick="nextCard()">Thẻ Kế ➡️</button>
+                            </div>
+                            
                             <script>
-                                (function() {{
-                                    if (!window.MathJax) {{
-                                        window.MathJax = {{
-                                            tex: {{
-                                                inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
-                                                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']]
-                                            }},
-                                            options: {{
-                                                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
-                                            }}
-                                        }};
-                                        var script = document.createElement('script');
-                                        script.src = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js";
-                                        script.async = true;
-                                        document.head.appendChild(script);
-                                    }} else {{
-                                        setTimeout(function() {{
-                                            if (window.MathJax.typeset) {{
-                                                window.MathJax.typeset();
-                                            }}
-                                        }}, 150);
+                                const cards = {fc_json};
+                                let currentIndex = 0;
+                                
+                                function updateCard() {{
+                                    const card = cards[currentIndex];
+                                    document.getElementById('frontContent').innerHTML = card.front;
+                                    document.getElementById('backContent').innerHTML = card.back;
+                                    
+                                    // Reset flip state
+                                    document.getElementById('flipCard').classList.remove('flipped');
+                                    
+                                    // Update progress
+                                    const progressPercent = ((currentIndex + 1) / cards.length) * 100;
+                                    document.getElementById('progressBar').style.width = progressPercent + '%';
+                                    document.getElementById('progressText').innerText = 'Thẻ ' + (currentIndex + 1) + ' trên ' + cards.length;
+                                    
+                                    // Enable/disable buttons
+                                    document.getElementById('prevBtn').disabled = (currentIndex === 0);
+                                    document.getElementById('nextBtn').disabled = (currentIndex === cards.length - 1);
+                                    
+                                    // Typeset MathJax
+                                    setTimeout(function() {{
+                                        if (window.MathJax && window.MathJax.typesetPromise) {{
+                                            window.MathJax.typesetPromise();
+                                        }}
+                                    }}, 100);
+                                }}
+                                
+                                function nextCard() {{
+                                    if (currentIndex < cards.length - 1) {{
+                                        currentIndex++;
+                                        updateCard();
                                     }}
-                                }})();
+                                }}
+                                
+                                function prevCard() {{
+                                    if (currentIndex > 0) {{
+                                        currentIndex--;
+                                        updateCard();
+                                    }}
+                                }}
+                                
+                                // Speak text on highlight/selection inside iframe
+                                document.addEventListener('mouseup', function(e) {{
+                                    const selection = window.getSelection().toString().trim();
+                                    if (selection.length > 0) {{
+                                        let lang = 'en-US';
+                                        const hasVietnamese = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ]/g.test(selection);
+                                        if (hasVietnamese) {{
+                                            lang = 'vi-VN';
+                                        }}
+                                        if (window.speechSynthesis) {{
+                                            window.speechSynthesis.cancel();
+                                            const utterance = new SpeechSynthesisUtterance(selection);
+                                            utterance.lang = lang;
+                                            window.speechSynthesis.speak(utterance);
+                                        }}
+                                    }}
+                                }});
+                                
+                                // Initial render
+                                updateCard();
                             </script>
-                            """,
-                            unsafe_allow_html=True
-                        )
-                        
-                        # Nút điều hướng Carousel
-                        col_fc_prev, col_fc_space, col_fc_next = st.columns([1, 2, 1])
-                        with col_fc_prev:
-                            if st.button("⬅️ Thẻ Trước", use_container_width=True, disabled=(current_fc_idx == 0)):
-                                st.session_state[fc_key] = current_fc_idx - 1
-                                st.rerun()
-                        with col_fc_next:
-                            if st.button("Thẻ Kế ➡️", use_container_width=True, disabled=(current_fc_idx == len(fc_list) - 1)):
-                                st.session_state[fc_key] = current_fc_idx + 1
-                                st.rerun()
+                        </body>
+                        </html>
+                        """
+                        st.components.v1.html(html_carousel, height=410)
             
             with tab_practice:
                 if grade_record:
