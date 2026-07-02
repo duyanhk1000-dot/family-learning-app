@@ -1018,21 +1018,32 @@ def inject_custom_css():
             opacity: 0.85;
         }
         
-        /* CSS Hiệu ứng Rê chuột hiện đáp án (Spoiler/Hover) */
-        .spoiler-answer {
+        /* CSS Hiệu ứng Rê chuột hiện đáp án (Spoiler/Hover) - Ép specificity cao nhất */
+        div[data-testid="stMarkdownContainer"] .spoiler-answer,
+        div[data-testid="stMarkdownContainer"] .spoiler-answer *,
+        .stMarkdown .spoiler-answer,
+        .stMarkdown .spoiler-answer * {
             color: transparent !important;
             background-color: #cbd5e1 !important;
-            border-radius: 4px !important;
-            padding: 2px 6px !important;
-            cursor: pointer !important;
-            display: inline-block !important;
             transition: color 0.2s ease, background-color 0.2s ease !important;
             user-select: none !important;
         }
-        .spoiler-answer:hover {
+        div[data-testid="stMarkdownContainer"] .spoiler-answer:hover,
+        div[data-testid="stMarkdownContainer"] .spoiler-answer:hover *,
+        .stMarkdown .spoiler-answer:hover,
+        .stMarkdown .spoiler-answer:hover * {
             color: #1e293b !important;
             background-color: transparent !important;
             user-select: text !important;
+        }
+        
+        .spoiler-answer {
+            border-radius: 6px !important;
+            padding: 8px 12px !important;
+            cursor: pointer !important;
+            display: block !important;
+            margin-top: 8px !important;
+            margin-bottom: 8px !important;
         }
         
         </style>
@@ -1636,9 +1647,13 @@ def show_parent_interface(client):
                                
                             3. Tổng kết & Vận dụng:
                                - Tóm tắt (Summary): Nhấn mạnh 3-5 điểm cốt lõi nhất dưới dạng Bullet point ngắn hoặc sơ đồ tư duy (mindmap) vẽ bằng mã SVG trực tiếp.
-                               - Kiểm tra cô đọng: 1-2 câu hỏi trắc nghiệm nhanh cuối bài giảng. Bắt buộc:
-                                 * Mỗi phương án trắc nghiệm (A, B, C, D) phải được viết trên một dòng riêng biệt (xuống dòng cho từng phương án).
-                                 * Phần đáp án đúng và giải thích phải được ẩn đi bằng cách bọc duy nhất trong thẻ HTML: `<span class="spoiler-answer">Đáp án đúng là X. Giải thích...</span>`. Học sinh chỉ khi rê chuột vào thì đáp án mới hiện lên.
+                               - Kiểm tra cô đọng: 1-2 câu hỏi trắc nghiệm nhanh cuối bài giảng. Quy tắc định dạng bắt buộc:
+                                 * Mỗi phương án trắc nghiệm (A, B, C, D) phải được trình bày dưới dạng danh sách gạch đầu dòng Markdown thô (Ví dụ:
+                                   - A. [Nội dung phương án A]
+                                   - B. [Nội dung phương án B]
+                                   - C. [Nội dung phương án C]
+                                   - D. [Nội dung phương án D]) để đảm bảo trình duyệt hiển thị mỗi phương án trên một dòng riêng biệt. TUYỆT ĐỐI không viết các phương án liền nhau trên cùng một dòng.
+                                 * Toàn bộ phần đáp án đúng và phần giải thích của câu hỏi bắt buộc phải được bọc bên trong thẻ HTML div sau: `<div class="spoiler-answer">**Đáp án đúng:** [Đáp án X]. **Giải thích:** [Lời giải thích chi tiết...]</div>`. Việc này sẽ ẩn nội dung đi bằng nền xám và chỉ hiển thị khi rê chuột vào.
                                - Nhiệm vụ thực tế (Call to Action): Giao "Thử thách thám hiểm" thực tế liên quan đến bài học để học sinh tự tìm tòi, ứng dụng kiến thức vào cuộc sống xung quanh con.
 
                             B. Yêu cầu chi tiết về ĐỀ KIỂM TRA (questions):
