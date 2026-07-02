@@ -495,8 +495,14 @@ def get_lessons_for_subject(subject):
     try:
         with get_db() as conn:
             rows = conn.execute(
-                "SELECT id, lesson_number, title, duration FROM Lessons WHERE subject = ? ORDER BY lesson_number ASC",
-                (subject,)
+                """
+                SELECT id, lesson_number, title, duration FROM Lessons 
+                WHERE subject = ? AND id IN (
+                    SELECT MAX(id) FROM Lessons WHERE subject = ? GROUP BY lesson_number
+                )
+                ORDER BY lesson_number ASC
+                """,
+                (subject, subject)
             ).fetchall()
             return [dict(r) for r in rows]
     except Exception as e:
@@ -508,7 +514,7 @@ def get_lesson_detail(subject, lesson_number):
     try:
         with get_db() as conn:
             row = conn.execute(
-                "SELECT id, lesson_number, title, lecture_content, questions, duration, flashcards FROM Lessons WHERE subject = ? AND lesson_number = ?",
+                "SELECT id, lesson_number, title, lecture_content, questions, duration, flashcards FROM Lessons WHERE subject = ? AND lesson_number = ? ORDER BY id DESC LIMIT 1",
                 (subject, lesson_number)
             ).fetchone()
             if row:
@@ -527,6 +533,19 @@ def save_lesson(subject, lesson_number, title, lecture_content, questions_json, 
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (subject, lesson_number, title, lecture_content, questions_json, duration, flashcards_json)
+            )
+            # Tự động xóa các dòng trùng lặp cũ của môn học này lập tức
+            conn.execute(
+                """
+                DELETE FROM Lessons 
+                WHERE subject = ? AND id NOT IN (
+                    SELECT MAX(id) 
+                    FROM Lessons 
+                    WHERE subject = ? 
+                    GROUP BY subject, lesson_number
+                )
+                """,
+                (subject, subject)
             )
             conn.commit()
             return True
