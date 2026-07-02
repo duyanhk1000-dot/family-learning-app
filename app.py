@@ -1610,13 +1610,15 @@ def show_parent_interface(client):
                             2. Bài giảng E-learning (Lesson Plan):
                                - Tông giọng giảng dạy: Thân thiện, khích lệ, đóng vai trò một người bạn đồng hành thông thái hỗ trợ học sinh học tập (Sử dụng các từ ngữ gần gũi như: "Chào con nhé...", "Con hãy thử nghĩ xem...", "Đúng rồi!", "Tuyệt vời lắm!").
                                - Lý thuyết trọng tâm: Trình bày lý thuyết ngắn gọn, dễ hiểu, sử dụng phương pháp giải thích Feynman (dùng các phép ẩn dụ sinh động, trực quan hoặc so sánh thay vì khái niệm hàn lâm khó hiểu). Sử dụng công thức LaTeX $...$ hoặc $$...$$ nếu có toán/lý/hóa.
-                               - Minh họa trực quan bằng hình vẽ SVG/Mermaid: 
-                                 * BẮT BUỘC chèn hình vẽ trực quan bằng mã **SVG** (định dạng ảnh vector tự vẽ bằng mã HTML) hoặc sơ đồ **Mermaid.js** để minh họa cho các khái niệm toán học, sơ đồ phân số, hình học, quy trình khoa học hoặc mối liên kết bài học (ví dụ: vẽ phân số 1/2 bằng vòng tròn SVG tô màu một nửa, hoặc sơ đồ phân nhánh Mermaid). Không được sử dụng link ảnh từ internet.
-                                 * Nếu có hình vẽ phức tạp trong sách giáo khoa gốc, hãy chỉ dẫn rõ cho học sinh: "[Mở sách giáo khoa trang X, quan sát Hình Y để đối chiếu]".
+                               - Minh họa trực quan bằng hình vẽ SVG: 
+                                 * BẮT BUỘC chèn hình vẽ trực quan hoặc sơ đồ tư duy (mindmap) bằng mã **SVG** (ảnh vector HTML) để minh họa cho khái niệm toán học, sơ đồ phân số, hình học, hay mối liên hệ bài học. Không được sử dụng link ảnh từ internet.
+                                 * **QUY TẮC CỰC KỲ QUAN TRỌNG VỀ SVG**: Viết mã `<svg>...</svg>` TRỰC TIẾP inline trong văn bản Markdown, **TUYỆT ĐỐI KHÔNG** bao quanh mã SVG bằng các ký tự dấu nháy ngược code block (như ` ```xml ` hoặc ` ```html ` hoặc ` ``` `). Mã SVG phải chạy thẳng để trình duyệt render trực tiếp.
+                                 * **KHÔNG DÙNG SƠ ĐỒ MERMAID**: Vì hệ thống không render được mã Mermaid dạng text block, hãy tự vẽ các sơ đồ tư duy (mindmap/flowchart) bằng mã SVG tự tạo (sử dụng các thẻ `<rect>`, `<circle>`, `<line>`, `<text>` có màu sắc tươi sáng, chữ rõ ràng dễ đọc) để biểu diễn các nhánh kiến thức.
+                                 * Nếu có hình vẽ phức tạp trong sách gốc, hãy ghi rõ chỉ dẫn: "[Mở sách giáo khoa trang X, xem Hình Y để đối chiếu]".
                                - Tương tác/Thực hành: Đan xen 2 câu hỏi/bài tập nhỏ tương tác nhanh (Micro-quizzes) ngay giữa các mục lý thuyết để học sinh tự suy nghĩ trả lời, kèm theo đáp án (Trả lời) và giải thích để khắc sâu kiến thức lập tức.
                                
                             3. Tổng kết & Vận dụng:
-                               - Tóm tắt (Summary): Nhấn mạnh 3-5 điểm cốt lõi nhất dưới dạng Bullet point ngắn hoặc sơ đồ tư duy dạng chữ (text-based mindmap).
+                               - Tóm tắt (Summary): Nhấn mạnh 3-5 điểm cốt lõi nhất dưới dạng Bullet point ngắn hoặc sơ đồ tư duy (mindmap) vẽ bằng mã SVG trực tiếp.
                                - Kiểm tra cô đọng: 1-2 câu hỏi trắc nghiệm nhanh cuối bài giảng.
                                - Nhiệm vụ thực tế (Call to Action): Giao "Thử thách thám hiểm" thực tế liên quan đến bài học để học sinh tự tìm tòi, ứng dụng kiến thức vào cuộc sống xung quanh con.
 
@@ -1624,7 +1626,7 @@ def show_parent_interface(client):
                             Thiết kế bộ đề kiểm tra cuối buổi gồm ĐÚNG 15 câu hỏi bám sát nội dung sách giáo khoa:
                             - 10 câu đầu: Trắc nghiệm (multiple_choice, có 4 đáp án A, B, C, D)
                             - 5 câu tiếp theo: Tự luận ngắn (essay)
-                            - Các câu hỏi nếu cần hình vẽ, hãy vẽ bằng SVG/Mermaid hoặc hướng dẫn học sinh xem hình tương ứng ở trang nào trong SGK.
+                            - Các câu hỏi nếu cần hình vẽ, hãy vẽ trực tiếp bằng mã SVG (không dùng dấu code block) hoặc hướng dẫn học sinh xem hình tương ứng ở trang nào trong SGK.
                             Hãy điền đầy đủ đáp án chuẩn hoặc hướng dẫn chấm vào từng câu.
 
                             C. Đề xuất thời gian làm bài (duration_minutes) hợp lý từ 30 đến 60 phút.
@@ -1765,7 +1767,7 @@ def show_parent_interface(client):
                     st.write(f"⏱️ **Thời gian làm bài thi:** {current_lesson['duration']} phút")
                     
                     with st.expander("📖 Xem nội dung bài giảng chi tiết (5 mục chuẩn)", expanded=True):
-                        st.markdown(current_lesson['lecture_content'])
+                        st.markdown(current_lesson['lecture_content'], unsafe_allow_html=True)
                     
                     with st.expander("🗂️ Xem 15 thẻ Flashcard ghi nhớ", expanded=False):
                         if current_lesson.get('flashcards'):
@@ -2085,7 +2087,7 @@ def show_student_interface(client):
             ])
             
             with tab_lecture:
-                st.markdown(lesson['lecture_content'])
+                st.markdown(lesson['lecture_content'], unsafe_allow_html=True)
                 
             with tab_flashcards:
                 st.write("### 🗂️ Thẻ Ghi Nhớ Ôn Tập (15 Flashcards)")
