@@ -369,19 +369,31 @@ def get_db():
     elif "DATABASE_URL" in os.environ:
         db_url = os.environ["DATABASE_URL"]
         
-    if db_url and HAS_POSTGRES:
-        try:
-            conn = psycopg2.connect(db_url)
-            init_postgres_tables(conn)
-            return PostgresWrapper(conn)
-        except Exception as e:
-            st.sidebar.error(f"Lỗi kết nối Supabase: {e}. Đang dùng SQLite làm dự phòng...")
+    # Gợi ý/Cảnh báo nếu cấu hình nhầm API URL/KEY thay vì PostgreSQL URL
+    if not db_url:
+        supabase_url_exists = False
+        if st.secrets:
+            supabase_url_exists = "SUPABASE_URL" in st.secrets or "SUPABASE_KEY" in st.secrets
+        if "SUPABASE_URL" in os.environ or "SUPABASE_KEY" in os.environ:
+            supabase_url_exists = True
             
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    init_sqlite_tables(conn)
-    return SQLiteWrapper(conn)
+        if supabase_url_exists:
+            st.error("⚠️ **Lỗi cấu hình Secrets:** Bạn đang điền `SUPABASE_URL` và `SUPABASE_KEY`. Tuy nhiên, ứng dụng này kết nối trực tiếp cơ sở dữ liệu qua PostgreSQL! Bạn cần lấy chuỗi kết nối **Connection String (URI)** từ Supabase Dashboard (mục Settings -> Database) và lưu vào Streamlit Secrets với tên là **`DATABASE_URL`** (dạng `postgresql://postgres:...`).")
+        else:
+            st.error("⚠️ **Chưa kết nối dữ liệu:** Không tìm thấy biến **`DATABASE_URL`** trong Streamlit Secrets hoặc biến môi trường!")
+        st.stop()
+        
+    if not HAS_POSTGRES:
+        st.error("⚠️ **Thiếu thư viện:** Thư viện kết nối Postgres (`psycopg2-binary`) chưa được cài đặt hoặc import thất bại!")
+        st.stop()
+        
+    try:
+        conn = psycopg2.connect(db_url)
+        init_postgres_tables(conn)
+        return PostgresWrapper(conn)
+    except Exception as e:
+        st.error(f"❌ **Lỗi kết nối Supabase PostgreSQL:** {e}")
+        st.stop()
 
 def reset_active_database():
     try:
