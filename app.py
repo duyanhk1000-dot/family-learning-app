@@ -397,6 +397,7 @@ def get_db():
 
 def reset_active_database():
     try:
+        st.cache_data.clear()
         db_url = None
         if st.secrets and "DATABASE_URL" in st.secrets:
             db_url = st.secrets["DATABASE_URL"]
@@ -440,6 +441,7 @@ def verify_user(username, password):
         st.error(f"Lỗi truy vấn người dùng: {e}")
     return None
 
+@st.cache_data
 def get_subjects():
     try:
         with get_db() as conn:
@@ -449,6 +451,7 @@ def get_subjects():
         st.error(f"Lỗi lấy danh sách môn học: {e}")
     return []
 
+@st.cache_data
 def get_syllabus(subject):
     try:
         with get_db() as conn:
@@ -459,6 +462,7 @@ def get_syllabus(subject):
         st.error(f"Lỗi lấy lộ trình học: {e}")
     return None
 
+@st.cache_data
 def get_syllabus_with_textbook(subject):
     try:
         with get_db() as conn:
@@ -471,6 +475,7 @@ def get_syllabus_with_textbook(subject):
 
 def save_syllabus(subject, content, textbook_content, pdf_file_path, total_lessons):
     try:
+        st.cache_data.clear()
         with get_db() as conn:
             conn.execute(
                 """
@@ -485,6 +490,7 @@ def save_syllabus(subject, content, textbook_content, pdf_file_path, total_lesso
         st.error(f"Lỗi lưu lộ trình học: {e}")
     return False
 
+@st.cache_data
 def get_lessons_for_subject(subject):
     try:
         with get_db() as conn:
@@ -497,6 +503,7 @@ def get_lessons_for_subject(subject):
         st.error(f"Lỗi lấy danh sách bài học: {e}")
     return []
 
+@st.cache_data
 def get_lesson_detail(subject, lesson_number):
     try:
         with get_db() as conn:
@@ -512,6 +519,7 @@ def get_lesson_detail(subject, lesson_number):
 
 def save_lesson(subject, lesson_number, title, lecture_content, questions_json, duration, flashcards_json):
     try:
+        st.cache_data.clear()
         with get_db() as conn:
             conn.execute(
                 """
@@ -526,6 +534,7 @@ def save_lesson(subject, lesson_number, title, lecture_content, questions_json, 
         st.error(f"Lỗi lưu bài giảng & đề thi: {e}")
     return False
 
+@st.cache_data
 def get_grades_for_parent():
     try:
         with get_db() as conn:
@@ -543,6 +552,7 @@ def get_grades_for_parent():
         st.error(f"Lỗi truy vấn bảng điểm phụ huynh: {e}")
     return []
 
+@st.cache_data
 def get_grade_for_student(student_username, lesson_id):
     try:
         with get_db() as conn:
@@ -558,6 +568,7 @@ def get_grade_for_student(student_username, lesson_id):
 
 def save_grade(student_username, lesson_id, answers_json, score, ai_feedback_json):
     try:
+        st.cache_data.clear()
         with get_db() as conn:
             conn.execute(
                 """
@@ -574,6 +585,7 @@ def save_grade(student_username, lesson_id, answers_json, score, ai_feedback_jso
 
 def save_message(sender, message):
     try:
+        st.cache_data.clear()
         with get_db() as conn:
             conn.execute(
                 """
@@ -588,6 +600,7 @@ def save_message(sender, message):
         st.error(f"Lỗi gửi tin nhắn: {e}")
     return False
 
+@st.cache_data
 def get_messages(limit=25):
     try:
         with get_db() as conn:
@@ -1968,6 +1981,7 @@ def show_parent_interface(client):
                                 # Xóa Lessons liên quan
                                 conn.execute("DELETE FROM Lessons WHERE subject = ?", (s['subject'],))
                                 conn.commit()
+                            st.cache_data.clear()
                             st.success(f"Đã xóa môn học '{s['subject']}' và toàn bộ bài giảng liên quan!")
                             st.rerun()
                         except Exception as e:
@@ -2002,6 +2016,7 @@ def show_parent_interface(client):
                             with get_db() as conn:
                                 conn.execute("DELETE FROM Lessons WHERE id = ?", (l['id'],))
                                 conn.commit()
+                            st.cache_data.clear()
                             st.success(f"Đã xóa bài giảng Buổi {l['lesson_number']} của môn '{l['subject']}'!")
                             st.rerun()
                         except Exception as e:
