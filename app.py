@@ -616,19 +616,59 @@ def extract_text_from_pdf(uploaded_file):
         return ""
 
 
-# --- LƯU TRỮ FILE PDF CỤC BỘ ---
+# --- LƯU TRỮ FILE PDF LÊN MÂY (SUPABASE STORAGE) ---
 
 def save_pdf_bytes(pdf_bytes, subject):
     try:
-        os.makedirs("data/textbooks", exist_ok=True)
-        # Sử dụng MD5 hash của subject làm tên file để tránh lỗi mã hóa Unicode tiếng Việt với thư viện HTTPX/Requests
+        import requests
+        import hashlib
+        import os
+        
+        # 1. Lấy Supabase URL từ Secrets hoặc Env
+        supabase_url = None
+        if st.secrets and "SUPABASE_URL" in st.secrets:
+            supabase_url = st.secrets["SUPABASE_URL"].strip().rstrip('/')
+        elif "SUPABASE_URL" in os.environ:
+            supabase_url = os.environ["SUPABASE_URL"].strip().rstrip('/')
+            
+        if not supabase_url:
+            supabase_url = "https://ubaupchqavybpjpxjmle.supabase.co"
+            
+        # 2. Định dạng tên file sạch bằng MD5 tránh ký tự tiếng Việt
         hash_name = hashlib.md5(subject.encode('utf-8')).hexdigest()
-        file_path = f"data/textbooks/{hash_name}.pdf"
-        with open(file_path, "wb") as f:
-            f.write(pdf_bytes)
-        return file_path
+        file_name = f"{hash_name}.pdf"
+        
+        # 3. Lấy API Key từ Secrets
+        supabase_key = None
+        if st.secrets and "SUPABASE_KEY" in st.secrets:
+            supabase_key = st.secrets["SUPABASE_KEY"]
+        elif "SUPABASE_KEY" in os.environ:
+            supabase_key = os.environ["SUPABASE_KEY"]
+            
+        if not supabase_key:
+            supabase_key = "sb_publishable_zbNs1LxLDkgdHLJ4RE6JYA_K9uJ3aFP"
+            
+        # Đường dẫn API upload của Supabase Storage
+        upload_url = f"{supabase_url}/storage/v1/object/textbooks/{file_name}"
+        
+        headers = {
+            "Authorization": f"Bearer {supabase_key}",
+            "apikey": supabase_key,
+            "Content-Type": "application/pdf"
+        }
+        
+        # 4. Gửi yêu cầu HTTP PUT để tải file trực tiếp lên Supabase Storage textbooks bucket
+        response = requests.put(upload_url, headers=headers, data=pdf_bytes)
+        
+        if response.status_code in [200, 201] or "Duplicate" in response.text:
+            # Trả về đường link Public URL của cuốn sách
+            public_url = f"{supabase_url}/storage/v1/object/public/textbooks/{file_name}"
+            return public_url
+        else:
+            st.error(f"Lỗi phản hồi từ Supabase Storage: {response.text} (Mã: {response.status_code})")
+            return ""
     except Exception as e:
-        st.error(f"Lỗi khi lưu tệp PDF cục bộ: {e}")
+        st.error(f"Lỗi khi lưu tệp PDF lên Supabase Cloud: {e}")
         return ""
 
 
@@ -1520,8 +1560,29 @@ def show_parent_interface(client):
                 current_lesson = get_lesson_detail(selected_sub_lesson, lesson_number)
                 
                 if btn_create_lesson:
-                    # Kiểm tra xem có file PDF gốc lưu cục bộ không để đưa vào Gemini File API
-                    use_multimodal = os.path.exists(pdf_file_path) if pdf_file_path else False
+                    # Kiểm tra xem có file PDF gốc không (cục bộ hoặc trên mây Supabase)
+                    use_multimodal = False
+                    downloaded_temp_pdf = ""
+                    
+                    if pdf_file_path:
+                        if pdf_file_path.startswith("http://") or pdf_file_path.startswith("https://"):
+                            # Tải tệp từ Supabase Storage về thư mục tạm
+                            with st.spinner("Đang tải tệp sách giáo khoa PDF từ bộ lưu trữ đám mây Supabase..."):
+                                try:
+                                    import requests
+                                    dl_response = requests.get(pdf_file_path)
+                                    if dl_response.status_code == 200:
+                                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
+                                            tmp_pdf.write(dl_response.content)
+                                            downloaded_temp_pdf = tmp_pdf.name
+                                        use_multimodal = True
+                                    else:
+                                        st.warning("Không thể tải sách giáo khoa từ link đám mây, tự động chuyển sang chế độ văn bản.")
+                                except Exception as dl_err:
+                                    st.warning(f"Lỗi tải sách từ đám mây: {dl_err}. Chuyển sang chế độ văn bản.")
+                        elif os.path.exists(pdf_file_path):
+                            downloaded_temp_pdf = pdf_file_path
+                            use_multimodal = True
                     
                     with st.spinner(f"AI đang soạn giáo án & bộ 15 câu hỏi kiểm tra cho Buổi {lesson_number}..."):
                         try:
@@ -1566,12 +1627,12 @@ def show_parent_interface(client):
                             """
                             
                             # Tải file PDF hoặc sử dụng text fallback để gửi cho Gemini
-                            if use_multimodal:
+                            if use_multimodal and downloaded_temp_pdf:
                                 temp_upload_path = ""
                                 try:
                                     # Tạo bản sao file tạm thời với tên hoàn toàn ASCII để upload an toàn
                                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-                                        with open(pdf_file_path, "rb") as original_file:
+                                        with open(downloaded_temp_pdf, "rb") as original_file:
                                             temp_file.write(original_file.read())
                                         temp_upload_path = temp_file.name
                                     
@@ -1684,6 +1745,13 @@ def show_parent_interface(client):
                                     }
                         except Exception as e:
                             st.error(f"Lỗi khi AI soạn giáo án: {e}")
+                        finally:
+                            # Giải phóng file tạm đã tải về từ mây nếu có
+                            if downloaded_temp_pdf and (pdf_file_path.startswith("http://") or pdf_file_path.startswith("https://")):
+                                try:
+                                    os.unlink(downloaded_temp_pdf)
+                                except Exception:
+                                    pass
                 
                 if current_lesson:
                     st.markdown(f"#### Buổi {lesson_number}: {current_lesson['title']}")
@@ -1953,6 +2021,14 @@ def show_student_interface(client):
             lesson_options = [f"Buổi {l['lesson_number']}: {l['title']}" for l in lessons]
             selected_lesson_str = st.selectbox("Chọn buổi học:", lesson_options, key="student_lesson_selectbox")
             selected_lesson_num = lessons[lesson_options.index(selected_lesson_str)]['lesson_number']
+            
+        # Thêm nút mở Sách giáo khoa PDF từ bộ lưu trữ đám mây cho học sinh
+        syllabus_data = get_syllabus_with_textbook(selected_subject)
+        if syllabus_data and syllabus_data.get('pdf_file_path'):
+            pdf_path = syllabus_data['pdf_file_path']
+            if pdf_path.startswith("http://") or pdf_path.startswith("https://"):
+                st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+                st.link_button("📖 Mở Sách Giáo Khoa (PDF)", pdf_path, use_container_width=True)
             
     with col_main:
         if selected_lesson_num:
