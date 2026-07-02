@@ -2193,6 +2193,32 @@ def show_student_interface(client):
                                     </div>
                                 </div>
                             </div>
+                            
+                            <script>
+                                (function() {{
+                                    if (!window.MathJax) {{
+                                        window.MathJax = {{
+                                            tex: {{
+                                                inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+                                                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']]
+                                            }},
+                                            options: {{
+                                                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+                                            }}
+                                        }};
+                                        var script = document.createElement('script');
+                                        script.src = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js";
+                                        script.async = true;
+                                        document.head.appendChild(script);
+                                    }} else {{
+                                        setTimeout(function() {{
+                                            if (window.MathJax.typeset) {{
+                                                window.MathJax.typeset();
+                                            }}
+                                        }}, 150);
+                                    }}
+                                }})();
+                            </script>
                             """,
                             unsafe_allow_html=True
                         )
