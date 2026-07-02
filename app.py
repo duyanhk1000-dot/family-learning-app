@@ -654,11 +654,12 @@ def save_pdf_bytes(pdf_bytes, subject):
         headers = {
             "Authorization": f"Bearer {supabase_key}",
             "apikey": supabase_key,
+            "x-upsert": "true",
             "Content-Type": "application/pdf"
         }
         
-        # 4. Gửi yêu cầu HTTP PUT để tải file trực tiếp lên Supabase Storage textbooks bucket
-        response = requests.put(upload_url, headers=headers, data=pdf_bytes)
+        # 4. Gửi yêu cầu HTTP POST để tải file trực tiếp lên Supabase Storage textbooks bucket (hỗ trợ ghi đè)
+        response = requests.post(upload_url, headers=headers, data=pdf_bytes)
         
         if response.status_code in [200, 201] or "Duplicate" in response.text:
             # Trả về đường link Public URL của cuốn sách
