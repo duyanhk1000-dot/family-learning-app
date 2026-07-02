@@ -1018,6 +1018,23 @@ def inject_custom_css():
             opacity: 0.85;
         }
         
+        /* CSS Hiệu ứng Rê chuột hiện đáp án (Spoiler/Hover) */
+        .spoiler-answer {
+            color: transparent !important;
+            background-color: #cbd5e1 !important;
+            border-radius: 4px !important;
+            padding: 2px 6px !important;
+            cursor: pointer !important;
+            display: inline-block !important;
+            transition: color 0.2s ease, background-color 0.2s ease !important;
+            user-select: none !important;
+        }
+        .spoiler-answer:hover {
+            color: #1e293b !important;
+            background-color: transparent !important;
+            user-select: text !important;
+        }
+        
         </style>
         """,
         unsafe_allow_html=True
@@ -1619,7 +1636,9 @@ def show_parent_interface(client):
                                
                             3. Tổng kết & Vận dụng:
                                - Tóm tắt (Summary): Nhấn mạnh 3-5 điểm cốt lõi nhất dưới dạng Bullet point ngắn hoặc sơ đồ tư duy (mindmap) vẽ bằng mã SVG trực tiếp.
-                               - Kiểm tra cô đọng: 1-2 câu hỏi trắc nghiệm nhanh cuối bài giảng.
+                               - Kiểm tra cô đọng: 1-2 câu hỏi trắc nghiệm nhanh cuối bài giảng. Bắt buộc:
+                                 * Mỗi phương án trắc nghiệm (A, B, C, D) phải được viết trên một dòng riêng biệt (xuống dòng cho từng phương án).
+                                 * Phần đáp án đúng và giải thích phải được ẩn đi bằng cách bọc duy nhất trong thẻ HTML: `<span class="spoiler-answer">Đáp án đúng là X. Giải thích...</span>`. Học sinh chỉ khi rê chuột vào thì đáp án mới hiện lên.
                                - Nhiệm vụ thực tế (Call to Action): Giao "Thử thách thám hiểm" thực tế liên quan đến bài học để học sinh tự tìm tòi, ứng dụng kiến thức vào cuộc sống xung quanh con.
 
                             B. Yêu cầu chi tiết về ĐỀ KIỂM TRA (questions):
